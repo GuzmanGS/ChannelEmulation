@@ -1,0 +1,27 @@
+{
+  "data": {
+    "seq_len": 4410,
+    "hop_len": 2205,
+    "sample_rate": null,
+    "val_split": 0.1,
+    "limit": null,
+    "input_file": "rawAudio.wav",
+    "output_file": "fxAudioVFuzz.wav"
+  },
+  "model": {
+    "nb_filters": 16,
+    "kernel_size": 3,
+    "dilations": [1, 2, 4, 8, 16, 32, 64, 128, 256, 1, 2, 4, 8, 16, 32, 64, 128, 256],
+    "nb_stacks": 1,
+    "dropout": 0.0,
+    "padding": "causal",
+    "use_skip_connections": true
+  },
+  "training": {
+    "batch_size": 40,
+    "epochs": 50,
+    "patience": 20,
+    "learning_rate": 0.001,
+    "seed": 42
+  }
+}

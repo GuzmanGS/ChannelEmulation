@@ -1,0 +1,12 @@
+Test file: rawAudio.wav
+Input path: D:\VIU\xxTFM\SW\RNN_ChannelEmulation\data\input\rawAudio.wav
+Model folder: m01
+Model path: D:\VIU\xxTFM\SW\RNN_ChannelEmulation\savedModels\m01\model.keras
+Output path: D:\VIU\xxTFM\SW\RNN_ChannelEmulation\data\results\m01\processed_rawAudio.wav
+Audio duration: 43.000000 seconds
+Computing time: 14.630362 seconds
+Real-time factor: 0.340241
+Speed factor: 2.94x
+Frame length: 4800 samples (100.0 ms)
+Hop length: 2400 samples (50.0% overlap)
+Sample rate: 48000 Hz
