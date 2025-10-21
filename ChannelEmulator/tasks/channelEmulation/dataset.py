@@ -149,6 +149,7 @@ def prepare_sequence_dataset(
         y = y[:dataset_size]
 
     indices = rng.permutation(dataset_size)
+    LOGGER.info("Shuffling %d window(s) with RNG seed %d.", dataset_size, seed)
     x = x[indices]
     y = y[indices]
 

@@ -1,0 +1,24 @@
+﻿{
+  "data": {
+    "seq_len": 4410,
+    "overlap": 0.5,
+    "val_split": 0.1,
+    "limit": null
+  },
+  "model": {
+    "nb_filters": 32,
+    "kernel_size": 5,
+    "dilations": [1, 2, 4, 8, 16, 32, 64, 128],
+    "nb_stacks": 2,
+    "dropout": 0.1,
+    "padding": "causal",
+    "use_skip_connections": true
+  },
+  "training": {
+    "batch_size": 32,
+    "epochs": 100,
+    "patience": 15,
+    "learning_rate": 0.0005,
+    "seed": 42
+  }
+}

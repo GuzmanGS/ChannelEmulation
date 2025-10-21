@@ -15,11 +15,7 @@ TASK_ROOT = Path(__file__).parent.resolve()
 DEFAULT_CONFIG_RELATIVE = "configs/wavenet3.json"
 DEFAULT_CONFIG_PATH = TASK_ROOT / DEFAULT_CONFIG_RELATIVE
 DEFAULT_DATA_ROOT = TASK_ROOT / "data"
-DEFAULT_INPUT_DIR = DEFAULT_DATA_ROOT / "input"
-DEFAULT_OUTPUT_DIR = DEFAULT_DATA_ROOT / "output"
 DEFAULT_SAVE_DIR = TASK_ROOT / "savedModels"
-DEFAULT_INPUT_FILE = "rawAudio.wav"
-DEFAULT_OUTPUT_FILE = "fxAudioVFuzz.wav"
 
 
 def parse_dilations(values: str) -> List[int]:
@@ -52,7 +48,8 @@ def load_config(config_path: Union[str, Path]) -> tuple[dict, Path]:
     for candidate in candidates:
         if candidate.exists():
             resolved = candidate.resolve()
-            with resolved.open("r", encoding="utf-8") as handle:
+            # Use 'utf-8-sig' to be tolerant of BOM-prefixed JSON files (common on Windows editors)
+            with resolved.open("r", encoding="utf-8-sig") as handle:
                 return json.load(handle), resolved
 
     raise FileNotFoundError(f"Unable to locate configuration file: {config_path}")
@@ -121,21 +118,23 @@ def run(args: argparse.Namespace):
     model_cfg = dict(config.get("model", {}))
     training_cfg = dict(config.get("training", {}))
 
-    if args.input is not None:
-        data_cfg["input_file"] = args.input
-    if args.output is not None:
-        data_cfg["output_file"] = args.output
-
     seq_len = int(data_cfg.get("seq_len", 0))
-    hop_len = int(data_cfg.get("hop_len", 0))
-    if seq_len <= 0 or hop_len <= 0:
-        raise ValueError("`seq_len` and `hop_len` must be positive integers.")
+    if seq_len <= 0:
+        raise ValueError("`seq_len` must be a positive integer.")
 
-    sample_rate = data_cfg.get("sample_rate")
-    if sample_rate is not None:
-        sample_rate = int(sample_rate)
-        if sample_rate <= 0:
-            raise ValueError("`sample_rate` must be a positive integer when provided.")
+    hop_len_cfg = data_cfg.get("hop_len")
+    overlap = data_cfg.get("overlap")
+    if overlap is not None:
+        overlap = float(overlap)
+        if not 0 <= overlap < 1:
+            raise ValueError("`overlap` must be in the range [0, 1).")
+        hop_len = max(1, int(round(seq_len * (1.0 - overlap))))
+    elif hop_len_cfg is not None:
+        hop_len = int(hop_len_cfg)
+        if hop_len <= 0:
+            raise ValueError("`hop_len` must be a positive integer.")
+    else:
+        raise ValueError("Provide either `hop_len` or `overlap` in the config.")
 
     val_split = float(data_cfg.get("val_split", 0.1))
     if not 0 < val_split < 1:
@@ -143,11 +142,11 @@ def run(args: argparse.Namespace):
 
     limit = data_cfg.get("limit")
     limit = None if limit is None else int(limit)
-    input_file = data_cfg.get("input_file", DEFAULT_INPUT_FILE)
-    output_file = data_cfg.get("output_file", DEFAULT_OUTPUT_FILE)
+    input_file = args.input
+    output_file = args.output
 
     if not input_file or not output_file:
-        raise ValueError("Both `input_file` and `output_file` must be specified.")
+        raise ValueError("Both `--input` and `--output` must be provided.")
 
     dilations_cfg = model_cfg.get("dilations")
     dilations = coerce_dilations(dilations_cfg) if dilations_cfg is not None else [1, 2, 4, 8]
@@ -167,9 +166,11 @@ def run(args: argparse.Namespace):
     save_model = (DEFAULT_SAVE_DIR / f"{resolved_config_path.stem}.keras").resolve()
 
     LOGGER.info(
-        "Preparing dataset from `%s` using config `%s`...",
+        "Preparing dataset from `%s` using config `%s` (hop_len=%d, overlap=%.2f)...",
         DEFAULT_DATA_ROOT,
         resolved_config_path,
+        hop_len,
+        1.0 - (hop_len / seq_len),
     )
 
     tf.random.set_seed(seed)
@@ -177,7 +178,6 @@ def run(args: argparse.Namespace):
         data_root=DEFAULT_DATA_ROOT,
         seq_len=seq_len,
         hop_len=hop_len,
-        sample_rate=sample_rate,
         val_split=val_split,
         limit_total_segments=limit,
         seed=seed,
@@ -258,13 +258,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--input",
         type=str,
-        default=None,
+        required=True,
         help="Input WAV filename located under the data/input directory.",
     )
     parser.add_argument(
         "--output",
         type=str,
-        default=None,
+        required=True,
         help="Target WAV filename located under the data/output directory.",
     )
     return parser
