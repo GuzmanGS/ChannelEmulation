@@ -1,6 +1,6 @@
 ﻿{
   "data": {
-    "seq_len": 4410,
+    "seq_len": 4800,
     "overlap": 0.5,
     "val_split": 0.1,
     "limit": null
@@ -16,8 +16,9 @@
   },
   "training": {
     "batch_size": 40,
-    "epochs": 200,
+    "epochs": 100,
     "patience": 20,
+    "pre_emphasis": 0.95,
     "learning_rate": 0.001,
     "seed": 42
   }

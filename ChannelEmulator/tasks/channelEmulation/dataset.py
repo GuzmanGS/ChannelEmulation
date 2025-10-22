@@ -27,7 +27,6 @@ def prepare_sequence_dataset(
     data_root: Path,
     seq_len: int,
     hop_len: int,
-    sample_rate: Optional[int] = None,
     val_split: float = 0.1,
     limit_total_segments: Optional[int] = None,
     seed: int = 42,
@@ -52,13 +51,13 @@ def prepare_sequence_dataset(
         input_filename=input_filename,
         output_filename=output_filename,
     )
-    resolved_sample_rate: Optional[int] = sample_rate
+    resolved_sample_rate: Optional[int] = None
 
     if not wav_pairs:
         LOGGER.warning(
             "No WAV pairs found in `%s`. Falling back to a synthetic dataset.", data_root
         )
-        return _synthetic_dataset(seq_len, val_split, rng, sample_rate or DEFAULT_SAMPLE_RATE)
+        return _synthetic_dataset(seq_len, val_split, rng, DEFAULT_SAMPLE_RATE)
 
     segments_x: List[np.ndarray] = []
     segments_y: List[np.ndarray] = []
@@ -161,7 +160,7 @@ def prepare_sequence_dataset(
         y_train=y[:-val_count],
         x_val=x[-val_count:],
         y_val=y[-val_count:],
-        sample_rate=resolved_sample_rate or sample_rate or DEFAULT_SAMPLE_RATE,
+        sample_rate=resolved_sample_rate or DEFAULT_SAMPLE_RATE,
         seq_len=seq_len,
     )
 

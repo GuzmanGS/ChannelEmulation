@@ -1,4 +1,9 @@
-import argparse
+"""
+Real-time audio inference optimized for low latency.
+
+This script processes audio in small blocks (mini-batches) to simulate
+real-time streaming with minimal latency while maintaining good throughput.
+"""
 import argparse
 import json
 import logging
@@ -29,7 +34,7 @@ DATA_RESULTS_DIR = TASK_ROOT / "data" / "results"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Real-time streaming inference: process audio sample-by-sample to measure real-time capability."
+        description="Real-time optimized inference with configurable latency/throughput tradeoff."
     )
     parser.add_argument(
         "--model",
@@ -45,6 +50,12 @@ def parse_args() -> argparse.Namespace:
         "--output",
         required=True,
         help="Filename for the output waveform (saved in data/results/<model-name>/).",
+    )
+    parser.add_argument(
+        "--block-size",
+        type=int,
+        default=64,
+        help="Number of samples to process per block (default: 64). Smaller = lower latency but slower.",
     )
     return parser.parse_args()
 
@@ -100,72 +111,105 @@ def denormalize_waveform(waveform: np.ndarray, min_val: float, max_val: float) -
     return denormalized.astype(np.float32)
 
 
-def sample_by_sample_inference(
+def streaming_inference_optimized(
     model: tf.keras.Model,
     normalized_waveform: np.ndarray,
     seq_len: int,
-) -> Tuple[np.ndarray, float]:
+    block_size: int = 64,
+) -> Tuple[np.ndarray, float, dict]:
     """
-    Process audio sample-by-sample to simulate real-time streaming.
+    Process audio in streaming fashion with mini-batches for efficiency.
+    
+    Args:
+        model: Trained TCN model
+        normalized_waveform: Input audio normalized to [0, 1]
+        seq_len: Model's sequence length (context window)
+        block_size: Number of samples to process per model call
     
     Returns:
         outputs: Processed audio samples
         elapsed_time: Total computation time in seconds
+        stats: Dictionary with performance metrics
     """
     num_samples = len(normalized_waveform)
     buffer = np.zeros(seq_len, dtype=np.float32)
     outputs = np.zeros(num_samples, dtype=np.float32)
     
-    LOGGER.info("Starting sample-by-sample inference on %d samples...", num_samples)
+    LOGGER.info("Starting streaming inference on %d samples (block_size=%d)...", 
+                num_samples, block_size)
     
-    # Progress logging intervals
-    log_interval = max(1, num_samples // 10)
+    # Statistics
+    num_blocks = 0
+    total_model_calls = 0
+    log_interval = max(1, (num_samples // block_size) // 10)
     
     inference_start = time.perf_counter()
     
-    for idx in range(num_samples):
-        # Shift buffer left and add new sample
-        buffer[:-1] = buffer[1:]
-        buffer[-1] = normalized_waveform[idx]
+    idx = 0
+    while idx < num_samples:
+        # Determine block size (might be smaller at the end)
+        current_block_size = min(block_size, num_samples - idx)
         
-        # Prepare input window: (1, seq_len, 1)
-        window = buffer.reshape(1, seq_len, 1)
+        # Prepare mini-batch of windows
+        windows = []
+        for offset in range(current_block_size):
+            # Update buffer with new sample
+            buffer[:-1] = buffer[1:]
+            buffer[-1] = normalized_waveform[idx + offset]
+            windows.append(buffer.copy())
         
-        # Run model inference
-        pred = model(window, training=False)
+        # Stack windows into batch: (block_size, seq_len)
+        batch = np.stack(windows, axis=0)
+        batch = batch[..., np.newaxis]  # (block_size, seq_len, 1)
         
-        # Extract the last output sample from the prediction
-        if isinstance(pred, tf.Tensor):
-            pred = pred.numpy()
-        pred = np.asarray(pred)
+        # Single model call for the entire block
+        preds = model(batch, training=False)
         
-        # Handle different output shapes: (1, seq_len, 1) or (1, seq_len) or similar
-        if pred.ndim == 3:
-            current = pred[0, -1, 0]
-        elif pred.ndim == 2:
-            current = pred[0, -1]
-        elif pred.ndim == 1:
-            current = pred[-1]
+        # Extract predictions
+        if isinstance(preds, tf.Tensor):
+            preds = preds.numpy()
+        preds = np.asarray(preds)
+        
+        # Take the last output from each prediction
+        if preds.ndim == 3:
+            block_outputs = preds[:, -1, 0]
+        elif preds.ndim == 2:
+            block_outputs = preds[:, -1]
         else:
-            raise ValueError(f"Unexpected prediction shape: {pred.shape}")
+            raise ValueError(f"Unexpected prediction shape: {preds.shape}")
         
-        outputs[idx] = float(current)
+        # Store outputs
+        outputs[idx:idx + current_block_size] = block_outputs
+        
+        idx += current_block_size
+        num_blocks += 1
+        total_model_calls += 1
         
         # Progress logging
-        if (idx + 1) % log_interval == 0 or idx == num_samples - 1:
+        if num_blocks % log_interval == 0 or idx >= num_samples:
             elapsed = time.perf_counter() - inference_start
-            progress = (idx + 1) / num_samples * 100
-            samples_per_sec = (idx + 1) / elapsed if elapsed > 0 else 0
+            progress = idx / num_samples * 100
+            samples_per_sec = idx / elapsed if elapsed > 0 else 0
             LOGGER.info(
-                "Progress: %d/%d (%.1f%%) | %.2f samples/sec",
-                idx + 1,
+                "Progress: %d/%d (%.1f%%) | %.2f samples/sec | %d model calls",
+                idx,
                 num_samples,
                 progress,
                 samples_per_sec,
+                total_model_calls,
             )
     
     total_elapsed = time.perf_counter() - inference_start
-    return outputs, total_elapsed
+    
+    stats = {
+        "num_samples": num_samples,
+        "block_size": block_size,
+        "num_blocks": num_blocks,
+        "total_model_calls": total_model_calls,
+        "avg_samples_per_call": num_samples / total_model_calls if total_model_calls > 0 else 0,
+    }
+    
+    return outputs, total_elapsed, stats
 
 
 def ensure_results_dir(model_name: str) -> Path:
@@ -193,7 +237,7 @@ def run_inference(args: argparse.Namespace):
 
     # Load config and model
     seq_len = load_config_for_model(model_path)
-    LOGGER.info("Using seq_len=%d from config (buffer size for causal processing).", seq_len)
+    LOGGER.info("Using seq_len=%d from config (causal context window).", seq_len)
 
     LOGGER.info("Loading model from `%s`...", model_path)
     model = tf.keras.models.load_model(
@@ -252,11 +296,12 @@ def run_inference(args: argparse.Namespace):
     
     normalized_waveform, min_val, max_val = normalize_waveform(waveform)
 
-    # Run sample-by-sample inference
-    predictions, inference_time = sample_by_sample_inference(
+    # Run streaming inference with mini-batches
+    predictions, inference_time, stats = streaming_inference_optimized(
         model,
         normalized_waveform,
         seq_len,
+        block_size=args.block_size,
     )
 
     # Denormalize output
@@ -272,29 +317,45 @@ def run_inference(args: argparse.Namespace):
     # Real-time performance analysis
     realtime_factor = audio_duration / inference_time if inference_time > 0 else float("inf")
     samples_per_sec = original_length / inference_time if inference_time > 0 else 0
+    latency_ms = (args.block_size / sample_rate) * 1000
     
     LOGGER.info("")
     LOGGER.info("=" * 70)
-    LOGGER.info("REAL-TIME PERFORMANCE REPORT")
+    LOGGER.info("REAL-TIME STREAMING PERFORMANCE REPORT")
     LOGGER.info("=" * 70)
-    LOGGER.info("Audio duration:        %.3f seconds", audio_duration)
-    LOGGER.info("Computation time:      %.3f seconds", inference_time)
-    LOGGER.info("Real-time factor:      %.2f x", realtime_factor)
-    LOGGER.info("Samples per second:    %.2f samples/sec", samples_per_sec)
+    LOGGER.info("Audio duration:         %.3f seconds", audio_duration)
+    LOGGER.info("Computation time:       %.3f seconds", inference_time)
+    LOGGER.info("Real-time factor:       %.2f x", realtime_factor)
+    LOGGER.info("Throughput:             %.2f samples/sec", samples_per_sec)
     LOGGER.info("Required for real-time: %d samples/sec", sample_rate)
+    LOGGER.info("")
+    LOGGER.info("Streaming configuration:")
+    LOGGER.info("  Block size:           %d samples", args.block_size)
+    LOGGER.info("  Block latency:        %.2f ms", latency_ms)
+    LOGGER.info("  Total blocks:         %d", stats["num_blocks"])
+    LOGGER.info("  Model calls:          %d (vs %d for sample-by-sample)", 
+                stats["total_model_calls"], original_length)
+    LOGGER.info("  Speedup factor:       %.1f x fewer model calls",
+                original_length / stats["total_model_calls"])
     LOGGER.info("")
     
     if realtime_factor >= 1.0:
         speedup_pct = (realtime_factor - 1.0) * 100
         LOGGER.info("✓ SUCCESS: Model CAN process audio in real-time!")
         LOGGER.info("  Processing is %.1f%% faster than real-time.", speedup_pct)
-        LOGGER.info("  Latency budget: %.3f ms per sample", 1000.0 / sample_rate)
-        LOGGER.info("  Actual latency: %.3f ms per sample", 1000.0 * inference_time / original_length)
+        LOGGER.info("  Effective latency: %.2f ms per block", latency_ms)
+        LOGGER.info("  Can be used for: Live processing, plugins, hardware")
     else:
         slowdown_pct = (1.0 - realtime_factor) * 100
         LOGGER.info("✗ FAILURE: Model CANNOT process audio in real-time.")
         LOGGER.info("  Processing is %.1f%% slower than real-time.", slowdown_pct)
         LOGGER.info("  Need to speed up by %.2f x to achieve real-time.", 1.0 / realtime_factor)
+        LOGGER.info("")
+        LOGGER.info("Suggestions to improve performance:")
+        LOGGER.info("  1. Increase --block-size (e.g. 128, 256) for better throughput")
+        LOGGER.info("  2. Reduce model complexity (fewer filters, stacks, or dilations)")
+        LOGGER.info("  3. Use GPU acceleration")
+        LOGGER.info("  4. Convert model to TensorFlow Lite or ONNX")
     
     LOGGER.info("=" * 70)
     LOGGER.info("")

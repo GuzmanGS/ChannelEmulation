@@ -1,6 +1,6 @@
 ﻿{
   "data": {
-    "seq_len": 4410,
+    "seq_len": 4800,
     "overlap": 0.5,
     "val_split": 0.1,
     "limit": null
@@ -15,9 +15,10 @@
     "use_skip_connections": true
   },
   "training": {
-    "batch_size": 32,
+    "batch_size": 40,
     "epochs": 100,
-    "patience": 15,
+    "patience": 20,
+    "pre_emphasis": 0.95,
     "learning_rate": 0.0005,
     "seed": 42
   }

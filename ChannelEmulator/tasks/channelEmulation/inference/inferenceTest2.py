@@ -1,6 +1,7 @@
-﻿import argparse
+import argparse
 import json
 import logging
+import sys
 import time
 from pathlib import Path
 from typing import Tuple
@@ -8,6 +9,12 @@ from typing import Tuple
 import numpy as np
 import tensorflow as tf
 
+CURRENT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = CURRENT_DIR.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from main import ModelMetadata  # noqa: F401 - ensure layer registration
 from tcn import TCN  # noqa: F401 - required for deserialization
 
 LOGGER = logging.getLogger(__name__)
@@ -170,13 +177,44 @@ def run_inference(args: argparse.Namespace):
     )
 
     LOGGER.info("Loading model from %s...", model_path)
-    model = tf.keras.models.load_model(model_path, custom_objects={"TCN": TCN}, compile=False)
+    model = tf.keras.models.load_model(
+        model_path,
+        custom_objects={"TCN": TCN, "ModelMetadata": ModelMetadata},
+        compile=False,
+    )
 
     LOGGER.info("Model architecture:")
     model.summary()
 
     LOGGER.info("Reading input waveform %s...", input_path)
     waveform, sample_rate = load_waveform(input_path)
+    metadata_layer = None
+    try:
+        metadata_layer = model.get_layer("model_metadata")
+    except ValueError:
+        LOGGER.warning("Model `%s` is missing metadata; skipping compatibility check.", model_path.name)
+
+    metadata_config = {}
+    model_sample_rate = None
+    if metadata_layer is not None:
+        model_sample_rate = int(getattr(metadata_layer, "sample_rate", None))
+        try:
+            metadata_config = metadata_layer.config_dict
+        except Exception:  # pragma: no cover
+            metadata_config = {}
+
+    if model_sample_rate is None:
+        LOGGER.warning("Sample rate metadata unavailable; skipping sample rate check.")
+    elif model_sample_rate != sample_rate:
+        raise ValueError(
+            f"Sample rate mismatch: model expects {model_sample_rate} Hz but input `{input_path.name}` is {sample_rate} Hz."
+        )
+    else:
+        LOGGER.info("Sample rate check passed (model=%d Hz, input=%d Hz).", model_sample_rate, sample_rate)
+    if metadata_config:
+        config_path = metadata_config.get("config_path")
+        if config_path:
+            LOGGER.info("Model metadata references config `%s`.", config_path)
     normalized_waveform, min_val, max_val = normalize_waveform(waveform)
 
     LOGGER.info("Running strictly sequential inference over %d samples...", len(normalized_waveform))

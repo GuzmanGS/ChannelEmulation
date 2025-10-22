@@ -2,7 +2,7 @@ import argparse
 import json
 import logging
 from pathlib import Path
-from typing import List, Sequence, Union
+from typing import List, Optional, Sequence, Union
 
 import tensorflow as tf
 
@@ -16,6 +16,110 @@ DEFAULT_CONFIG_RELATIVE = "configs/wavenet3.json"
 DEFAULT_CONFIG_PATH = TASK_ROOT / DEFAULT_CONFIG_RELATIVE
 DEFAULT_DATA_ROOT = TASK_ROOT / "data"
 DEFAULT_SAVE_DIR = TASK_ROOT / "savedModels"
+
+
+def _validate_pre_emphasis(coefficient: float) -> float:
+    if not isinstance(coefficient, (float, int)):
+        raise TypeError("Pre-emphasis coefficient must be a real number.")
+    coeff = float(coefficient)
+    if not 0.0 <= coeff < 1.0:
+        raise ValueError("Pre-emphasis coefficient must be in the range [0.0, 1.0).")
+    return coeff
+
+
+def apply_pre_emphasis(signal: tf.Tensor, coefficient: float) -> tf.Tensor:
+    """Apply H(z) = 1 - coefficient * z^-1 along the time axis."""
+    coeff = _validate_pre_emphasis(coefficient)
+    tensor = tf.convert_to_tensor(signal, dtype=tf.float32)
+
+    rank = tensor.shape.rank
+    if rank is None:
+        raise ValueError("Pre-emphasis expects a tensor with known rank.")
+    if rank < 2 or rank > 3:
+        raise ValueError(
+            "Pre-emphasis expects shape (batch, time) or (batch, time, channels); "
+            f"received a rank-{rank} tensor."
+        )
+
+    added_channel = False
+    if rank == 2:
+        tensor = tensor[..., tf.newaxis]
+        added_channel = True
+
+    first = tensor[:, :1, :]
+    remaining = tensor[:, 1:, :] - coeff * tensor[:, :-1, :]
+    emphasized = tf.concat([first, remaining], axis=1)
+
+    if added_channel:
+        emphasized = tf.squeeze(emphasized, axis=-1)
+
+    return emphasized
+
+
+class PreEmphasisESRLoss(tf.keras.losses.Loss):
+    def __init__(self, *, coefficient: float, epsilon: float = 1e-8, name: str = "pre_emphasis_esr"):
+        coeff = _validate_pre_emphasis(coefficient)
+        if epsilon <= 0.0:
+            raise ValueError("Epsilon must be positive to stabilise the ESR denominator.")
+        super().__init__(name=name)
+        self.coefficient = coeff
+        self.epsilon = float(epsilon)
+
+    def call(self, y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:
+        target = apply_pre_emphasis(y_true, self.coefficient)
+        predicted = apply_pre_emphasis(y_pred, self.coefficient)
+        error = target - predicted
+        axes = tf.range(1, tf.rank(error))
+        numerator = tf.reduce_sum(tf.square(error), axis=axes)
+        denominator = tf.reduce_sum(tf.square(target), axis=axes)
+        ratio = numerator / (denominator + self.epsilon)
+        return tf.reduce_mean(ratio)
+
+    def get_config(self) -> dict:
+        config = super().get_config()
+        config.update({"coefficient": self.coefficient, "epsilon": self.epsilon})
+        return config
+
+
+@tf.keras.utils.register_keras_serializable(package="channel_emulation")
+class ModelMetadata(tf.keras.layers.Layer):
+    """Identity layer that stores training metadata (sample rate, config)."""
+
+    def __init__(
+        self,
+        *,
+        sample_rate: int,
+        config: Optional[dict] = None,
+        config_json: Optional[str] = None,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        if sample_rate is None:
+            raise ValueError("`sample_rate` must be provided for ModelMetadata.")
+        self.sample_rate = int(sample_rate)
+        if config is not None:
+            self.config_json = json.dumps(config, sort_keys=True)
+        elif config_json is not None:
+            self.config_json = str(config_json)
+        else:
+            raise ValueError("Either `config` or `config_json` must be provided for ModelMetadata.")
+
+    def call(self, inputs: tf.Tensor) -> tf.Tensor:
+        return tf.identity(inputs)
+
+    def get_config(self) -> dict:
+        config = super().get_config()
+        config.update(
+            {
+                "sample_rate": self.sample_rate,
+                "config_json": self.config_json,
+            }
+        )
+        return config
+
+    @property
+    def config_dict(self) -> dict:
+        return json.loads(self.config_json)
 
 
 def parse_dilations(values: str) -> List[int]:
@@ -78,6 +182,10 @@ def build_model(
     padding: str,
     learning_rate: float,
     use_skip_connections: bool,
+    pre_emphasis: float,
+    loss_epsilon: float = 1e-8,
+    sample_rate: int,
+    config_metadata: dict,
 ):
     inputs = tf.keras.Input(shape=(seq_len, input_dim), name="input_waveform")
     tcn_layer = TCN(
@@ -95,14 +203,23 @@ def build_model(
     outputs = tf.keras.layers.Dense(
         output_dim, activation="linear", name="channel_output"
     )(x)
+    outputs = ModelMetadata(
+        sample_rate=sample_rate,
+        config=config_metadata,
+        name="model_metadata",
+    )(outputs)
 
     model = tf.keras.Model(
         inputs=inputs,
         outputs=outputs,
         name="channel_emulation_tcn",
     )
+    model.sample_rate = int(sample_rate)
+    model.config_metadata = config_metadata
     optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate, clipnorm=1.0)
-    model.compile(optimizer=optimizer, loss="mean_squared_error")
+    loss = PreEmphasisESRLoss(coefficient=pre_emphasis, epsilon=loss_epsilon) #audio-friendly loss function
+    # Alternative simple loss: loss = "mean_squared_error"
+    model.compile(optimizer=optimizer, loss=loss)
     return model
 
 
@@ -145,6 +262,14 @@ def run(args: argparse.Namespace):
     input_file = args.input
     output_file = args.output
 
+    data_metadata = {
+        "seq_len": seq_len,
+        "hop_len": hop_len,
+        "overlap": overlap,
+        "val_split": val_split,
+        "limit": limit,
+    }
+
     if not input_file or not output_file:
         raise ValueError("Both `--input` and `--output` must be provided.")
 
@@ -161,6 +286,8 @@ def run(args: argparse.Namespace):
     batch_size = int(training_cfg.get("batch_size", 32))
     epochs = int(training_cfg.get("epochs", 50))
     patience = int(training_cfg.get("patience", 10))
+    pre_emphasis = float(training_cfg.get("pre_emphasis", 0.95))
+    loss_epsilon = float(training_cfg.get("loss_epsilon", 1e-8))
     seed = int(training_cfg.get("seed", 42))
 
     save_model = (DEFAULT_SAVE_DIR / f"{resolved_config_path.stem}.keras").resolve()
@@ -185,6 +312,37 @@ def run(args: argparse.Namespace):
         output_filename=output_file,
     )
 
+    data_metadata["sample_rate"] = dataset.sample_rate
+
+    model_metadata_cfg = {
+        "nb_filters": nb_filters,
+        "kernel_size": kernel_size,
+        "dilations": list(dilations),
+        "nb_stacks": nb_stacks,
+        "dropout": dropout,
+        "padding": padding,
+        "use_skip_connections": use_skip_connections,
+    }
+
+    training_metadata_cfg = {
+        "batch_size": batch_size,
+        "epochs": epochs,
+        "patience": patience,
+        "learning_rate": learning_rate,
+        "pre_emphasis": pre_emphasis,
+        "loss_epsilon": loss_epsilon,
+        "seed": seed,
+        "optimizer": "Adam",
+    }
+
+    metadata_payload = {
+        "config_path": str(resolved_config_path),
+        "data": data_metadata,
+        "model": model_metadata_cfg,
+        "training": training_metadata_cfg,
+        "io": {"input": input_file, "output": output_file},
+    }
+
     LOGGER.info(
         "Dataset ready | sample_rate=%d Hz | train=%d | val=%d",
         dataset.sample_rate,
@@ -204,6 +362,10 @@ def run(args: argparse.Namespace):
         padding=padding,
         learning_rate=learning_rate,
         use_skip_connections=use_skip_connections,
+        pre_emphasis=pre_emphasis,
+        loss_epsilon=loss_epsilon,
+        sample_rate=dataset.sample_rate,
+        config_metadata=metadata_payload,
     )
 
     try:

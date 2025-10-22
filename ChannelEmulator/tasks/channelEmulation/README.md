@@ -25,6 +25,13 @@ python main.py --config wavenet3.json --input rawAudio.wav --output fxAudioVFuzz
 
 The JSON configuration supplies the sequence length, dilation pattern, overlap ratio, and optimisation settings; the input/output filenames are provided explicitly on the command line. Adjust hyperparameters inside the JSON as needed. When validation windows are available the script enables early stopping. Each trained model is stored automatically in `tasks/channelEmulation/savedModels/<config-name>.keras` so the exported artifact clearly matches the configuration used.
 
+### Training Details
+
+- Optimisation minimises the error-to-signal ratio (ESR) after applying a first-order pre-emphasis filter `H(z) = 1 - 0.95 z^-1` to both targets and predictions. The coefficient is configurable via `training.pre_emphasis`.
+- Default experiments use 100 ms windows (e.g. `data.seq_len = 4800` at 48 kHz) and a mini-batch size of 40; the loader infers the sample rate directly from the WAV files.
+- Validation monitors the same pre-emphasised ESR; early stopping patience is 20 epochs by default.
+- Each saved `.keras` model embeds the dataset sample rate plus the sanitised training config via a metadata layer so inference scripts can verify WAV compatibility and provenance automatically.
+
 ### Inference
 
 To render processed audio with a trained model:
