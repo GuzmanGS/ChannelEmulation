@@ -1,12 +1,17 @@
 import argparse
 import json
 import logging
+import warnings
 from pathlib import Path
 from typing import List, Optional, Sequence, Union
 
 import tensorflow as tf
 
-from dataset import SequenceDataset, prepare_sequence_dataset
+from dataset import (
+    SequenceDataset,
+    compute_context_length,
+    prepare_sequence_dataset,
+)
 from tcn import TCN, tcn_full_summary
 
 LOGGER = logging.getLogger(__name__)
@@ -16,6 +21,11 @@ DEFAULT_CONFIG_RELATIVE = "configs/wavenet3.json"
 DEFAULT_CONFIG_PATH = TASK_ROOT / DEFAULT_CONFIG_RELATIVE
 DEFAULT_DATA_ROOT = TASK_ROOT / "data"
 DEFAULT_SAVE_DIR = TASK_ROOT / "savedModels"
+
+warnings.filterwarnings(
+    "ignore",
+    message=".*tf\\.placeholder is deprecated.*",
+)
 
 
 def _validate_pre_emphasis(coefficient: float) -> float:
@@ -170,10 +180,12 @@ def coerce_dilations(value: Union[str, Sequence[int]]) -> List[int]:
 
 
 def build_model(
-    seq_len: int,
+    input_seq_len: int,
+    target_seq_len: int,
     input_dim: int,
     output_dim: int,
     *,
+    context: int,
     nb_filters: int,
     kernel_size: int,
     dilations: List[int],
@@ -187,7 +199,7 @@ def build_model(
     sample_rate: int,
     config_metadata: dict,
 ):
-    inputs = tf.keras.Input(shape=(seq_len, input_dim), name="input_waveform")
+    inputs = tf.keras.Input(shape=(input_seq_len, input_dim), name="input_waveform")
     tcn_layer = TCN(
         nb_filters=nb_filters,
         kernel_size=kernel_size,
@@ -200,14 +212,14 @@ def build_model(
         name="tcn_backbone",
     )
     x = tcn_layer(inputs)
-    outputs = tf.keras.layers.Dense(
-        output_dim, activation="linear", name="channel_output"
-    )(x)
+    x = tf.keras.layers.Dense(output_dim, activation="linear", name="channel_output")(x)
+    if context > 0:
+        x = tf.keras.layers.Cropping1D(cropping=(context, 0), name="context_crop")(x)
     outputs = ModelMetadata(
         sample_rate=sample_rate,
         config=config_metadata,
         name="model_metadata",
-    )(outputs)
+    )(x)
 
     model = tf.keras.Model(
         inputs=inputs,
@@ -217,7 +229,7 @@ def build_model(
     model.sample_rate = int(sample_rate)
     model.config_metadata = config_metadata
     optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate, clipnorm=1.0)
-    loss = PreEmphasisESRLoss(coefficient=pre_emphasis, epsilon=loss_epsilon) #audio-friendly loss function
+    loss = PreEmphasisESRLoss(coefficient=pre_emphasis, epsilon=loss_epsilon)  # audio-friendly loss function
     # Alternative simple loss: loss = "mean_squared_error"
     model.compile(optimizer=optimizer, loss=loss)
     return model
@@ -262,14 +274,6 @@ def run(args: argparse.Namespace):
     input_file = args.input
     output_file = args.output
 
-    data_metadata = {
-        "seq_len": seq_len,
-        "hop_len": hop_len,
-        "overlap": overlap,
-        "val_split": val_split,
-        "limit": limit,
-    }
-
     if not input_file or not output_file:
         raise ValueError("Both `--input` and `--output` must be provided.")
 
@@ -281,6 +285,17 @@ def run(args: argparse.Namespace):
     dropout = float(model_cfg.get("dropout", 0.0))
     padding = model_cfg.get("padding", "causal")
     use_skip_connections = bool(model_cfg.get("use_skip_connections", True))
+    context = compute_context_length(kernel_size, dilations, nb_stacks)
+
+    data_metadata = {
+        "seq_len": seq_len,
+        "input_seq_len": seq_len + context,
+        "context": context,
+        "hop_len": hop_len,
+        "overlap": overlap,
+        "val_split": val_split,
+        "limit": limit,
+    }
 
     learning_rate = float(training_cfg.get("learning_rate", 0.001))
     batch_size = int(training_cfg.get("batch_size", 32))
@@ -305,6 +320,7 @@ def run(args: argparse.Namespace):
         data_root=DEFAULT_DATA_ROOT,
         seq_len=seq_len,
         hop_len=hop_len,
+        context=context,
         val_split=val_split,
         limit_total_segments=limit,
         seed=seed,
@@ -313,6 +329,9 @@ def run(args: argparse.Namespace):
     )
 
     data_metadata["sample_rate"] = dataset.sample_rate
+    data_metadata["input_seq_len"] = dataset.input_seq_len
+    data_metadata["target_seq_len"] = dataset.target_seq_len
+    data_metadata["context"] = dataset.context
 
     model_metadata_cfg = {
         "nb_filters": nb_filters,
@@ -344,16 +363,21 @@ def run(args: argparse.Namespace):
     }
 
     LOGGER.info(
-        "Dataset ready | sample_rate=%d Hz | train=%d | val=%d",
+        "Dataset ready | sample_rate=%d Hz | train=%d | val=%d | input_seq_len=%d | target_seq_len=%d | context=%d",
         dataset.sample_rate,
         len(dataset.x_train),
         len(dataset.x_val),
+        dataset.input_seq_len,
+        dataset.target_seq_len,
+        dataset.context,
     )
 
     model = build_model(
-        seq_len=dataset.seq_len,
+        input_seq_len=dataset.input_seq_len,
+        target_seq_len=dataset.target_seq_len,
         input_dim=dataset.x_train.shape[-1],
         output_dim=dataset.y_train.shape[-1],
+        context=dataset.context,
         nb_filters=nb_filters,
         kernel_size=kernel_size,
         dilations=dilations,
@@ -368,10 +392,20 @@ def run(args: argparse.Namespace):
         config_metadata=metadata_payload,
     )
 
-    try:
-        tcn_full_summary(model)
-    except Exception as exc:  # pylint: disable=broad-except
-        LOGGER.warning("Falling back to `model.summary()` due to: %s", exc)
+    tf_version = tf.version.VERSION.split("-")[0]
+    version_parts = [int(part) for part in tf_version.split(".")[:2]]
+    major, minor = (version_parts + [0])[:2]
+    if major < 2 or (major == 2 and minor <= 5):
+        try:
+            tcn_full_summary(model)
+        except Exception as exc:  # pylint: disable=broad-except
+            LOGGER.warning("Falling back to `model.summary()` due to: %s", exc)
+            model.summary()
+    else:
+        LOGGER.info(
+            "Skipping `tcn_full_summary` for TensorFlow %s; using `model.summary()` instead.",
+            tf.version.VERSION,
+        )
         model.summary()
 
     callbacks = []

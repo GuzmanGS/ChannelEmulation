@@ -14,7 +14,12 @@ PROJECT_ROOT = CURRENT_DIR.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from main import ModelMetadata  # noqa: F401 - ensure layer registration
+from dataset import (
+    compute_context_length,
+    denormalize_from_unit_range,
+    normalize_to_unit_range,
+)
+from main import ModelMetadata, coerce_dilations  # noqa: F401 - ensure layer registration
 from tcn import TCN  # noqa: F401 - required for deserialization
 
 LOGGER = logging.getLogger(__name__)
@@ -57,7 +62,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_config(model_path: Path) -> Tuple[int, int]:
+def load_config(model_path: Path) -> Tuple[int, int, int]:
     config_path = CONFIGS_DIR / f"{model_path.stem}.json"
     if not config_path.exists():
         raise FileNotFoundError(
@@ -88,7 +93,16 @@ def load_config(model_path: Path) -> Tuple[int, int]:
     else:
         raise ValueError("Config must define either hop_len or overlap.")
 
-    return seq_len, hop_len
+    model_cfg = config.get("model", {})
+    kernel_size = int(model_cfg.get("kernel_size", 3))
+    nb_stacks = int(model_cfg.get("nb_stacks", 1))
+    dilations_cfg = model_cfg.get("dilations")
+    if dilations_cfg is None:
+        raise ValueError("Model config must include dilations to derive context.")
+    dilations = coerce_dilations(dilations_cfg)
+    context = compute_context_length(kernel_size, dilations, nb_stacks)
+
+    return seq_len, hop_len, context
 
 
 def load_waveform(path: Path) -> Tuple[np.ndarray, int]:
@@ -101,22 +115,6 @@ def load_waveform(path: Path) -> Tuple[np.ndarray, int]:
     return waveform, sr
 
 
-def normalize_waveform(waveform: np.ndarray) -> Tuple[np.ndarray, float, float]:
-    min_val = float(np.min(waveform))
-    max_val = float(np.max(waveform))
-    if np.isclose(max_val, min_val):
-        return np.zeros_like(waveform, dtype=np.float32), min_val, max_val
-    normalized = (waveform - min_val) / (max_val - min_val)
-    return normalized.astype(np.float32), min_val, max_val
-
-
-def denormalize_waveform(waveform: np.ndarray, min_val: float, max_val: float) -> np.ndarray:
-    if np.isclose(max_val, min_val):
-        return np.full_like(waveform, fill_value=min_val, dtype=np.float32)
-    denormalized = waveform * (max_val - min_val) + min_val
-    return denormalized.astype(np.float32)
-
-
 def ensure_results_dir(model_name: str) -> Path:
     dest = DATA_RESULTS_DIR / model_name
     dest.mkdir(parents=True, exist_ok=True)
@@ -127,15 +125,17 @@ def sample_by_sample_inference(
     model: tf.keras.Model,
     normalized_waveform: np.ndarray,
     seq_len: int,
+    context: int,
 ) -> np.ndarray:
     num_samples = len(normalized_waveform)
-    buffer = np.zeros(seq_len, dtype=np.float32)
+    input_seq_len = seq_len + context
+    buffer = np.zeros(input_seq_len, dtype=np.float32)
     outputs = np.zeros(num_samples, dtype=np.float32)
 
     for idx, sample in enumerate(normalized_waveform):
         buffer[:-1] = buffer[1:]
         buffer[-1] = sample
-        window = buffer.reshape(1, seq_len, 1)
+        window = buffer.reshape(1, input_seq_len, 1)
         pred = model(window, training=False)
         if isinstance(pred, tf.Tensor):
             pred = pred.numpy()
@@ -167,13 +167,16 @@ def run_inference(args: argparse.Namespace):
     if not input_path.exists():
         raise FileNotFoundError(f"Input WAV {input_path} not found.")
 
-    seq_len, hop_len = load_config(model_path)
+    seq_len, hop_len, context = load_config(model_path)
+    input_seq_len = seq_len + context
     LOGGER.info(
-        "Model %s: seq_len=%d, derived hop_len=%d (implied overlap %.2f).",
+        "Model %s: seq_len=%d, hop_len=%d (implied overlap %.2f), context=%d (input_seq_len=%d).",
         model_path.name,
         seq_len,
         hop_len,
         1.0 - hop_len / seq_len,
+        context,
+        input_seq_len,
     )
 
     LOGGER.info("Loading model from %s...", model_path)
@@ -215,7 +218,7 @@ def run_inference(args: argparse.Namespace):
         config_path = metadata_config.get("config_path")
         if config_path:
             LOGGER.info("Model metadata references config `%s`.", config_path)
-    normalized_waveform, min_val, max_val = normalize_waveform(waveform)
+    normalized_waveform = normalize_to_unit_range(waveform)
 
     LOGGER.info("Running strictly sequential inference over %d samples...", len(normalized_waveform))
     inference_start = time.perf_counter()
@@ -223,11 +226,12 @@ def run_inference(args: argparse.Namespace):
         model,
         normalized_waveform,
         seq_len,
+        context,
     )
     elapsed = time.perf_counter() - inference_start
 
     reconstructed = np.clip(predictions, 0.0, 1.0)
-    reconstructed = denormalize_waveform(reconstructed, min_val, max_val)
+    reconstructed = denormalize_from_unit_range(reconstructed)
 
     results_dir = ensure_results_dir(model_path.stem)
     output_path = results_dir / f"{Path(args.input).stem}_inf.wav"

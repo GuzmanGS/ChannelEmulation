@@ -20,7 +20,12 @@ PROJECT_ROOT = CURRENT_DIR.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from main import ModelMetadata  # noqa: F401 - ensure layer registration
+from dataset import (
+    compute_context_length,
+    denormalize_from_unit_range,
+    normalize_to_unit_range,
+)
+from main import ModelMetadata, coerce_dilations  # noqa: F401 - ensure layer registration
 from tcn import TCN  # noqa: F401 - required to deserialize custom layer
 
 LOGGER = logging.getLogger(__name__)
@@ -60,8 +65,8 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_config_for_model(model_path: Path) -> int:
-    """Load seq_len from the config file matching the model name."""
+def load_config_for_model(model_path: Path) -> Tuple[int, int]:
+    """Load seq_len and context from the config file matching the model name."""
     config_path = CONFIGS_DIR / f"{model_path.stem}.json"
     if not config_path.exists():
         raise FileNotFoundError(
@@ -79,7 +84,16 @@ def load_config_for_model(model_path: Path) -> int:
     if seq_len <= 0:
         raise ValueError("`seq_len` must be a positive integer in the config.")
     
-    return seq_len
+    model_cfg = config.get("model", {})
+    kernel_size = int(model_cfg.get("kernel_size", 3))
+    nb_stacks = int(model_cfg.get("nb_stacks", 1))
+    dilations_cfg = model_cfg.get("dilations")
+    if dilations_cfg is None:
+        raise ValueError("Model config must include `dilations` to derive context.")
+    dilations = coerce_dilations(dilations_cfg)
+    context = compute_context_length(kernel_size, dilations, nb_stacks)
+
+    return seq_len, context
 
 
 def load_waveform(path: Path) -> Tuple[np.ndarray, int]:
@@ -93,28 +107,11 @@ def load_waveform(path: Path) -> Tuple[np.ndarray, int]:
     return waveform, sr
 
 
-def normalize_waveform(waveform: np.ndarray) -> Tuple[np.ndarray, float, float]:
-    """Min-max normalize waveform to [0, 1] and return normalization parameters."""
-    min_val = float(np.min(waveform))
-    max_val = float(np.max(waveform))
-    if np.isclose(max_val, min_val):
-        return np.zeros_like(waveform, dtype=np.float32), min_val, max_val
-    normalized = (waveform - min_val) / (max_val - min_val)
-    return normalized.astype(np.float32), min_val, max_val
-
-
-def denormalize_waveform(waveform: np.ndarray, min_val: float, max_val: float) -> np.ndarray:
-    """Denormalize waveform from [0, 1] back to original range."""
-    if np.isclose(max_val, min_val):
-        return np.full_like(waveform, fill_value=min_val, dtype=np.float32)
-    denormalized = waveform * (max_val - min_val) + min_val
-    return denormalized.astype(np.float32)
-
-
 def streaming_inference_optimized(
     model: tf.keras.Model,
     normalized_waveform: np.ndarray,
     seq_len: int,
+    context: int,
     block_size: int = 64,
 ) -> Tuple[np.ndarray, float, dict]:
     """
@@ -123,7 +120,8 @@ def streaming_inference_optimized(
     Args:
         model: Trained TCN model
         normalized_waveform: Input audio normalized to [0, 1]
-        seq_len: Model's sequence length (context window)
+        seq_len: Target sequence length (per-block output window)
+        context: Additional causal samples required by the receptive field
         block_size: Number of samples to process per model call
     
     Returns:
@@ -132,7 +130,8 @@ def streaming_inference_optimized(
         stats: Dictionary with performance metrics
     """
     num_samples = len(normalized_waveform)
-    buffer = np.zeros(seq_len, dtype=np.float32)
+    input_seq_len = seq_len + context
+    buffer = np.zeros(input_seq_len, dtype=np.float32)
     outputs = np.zeros(num_samples, dtype=np.float32)
     
     LOGGER.info("Starting streaming inference on %d samples (block_size=%d)...", 
@@ -157,11 +156,11 @@ def streaming_inference_optimized(
             buffer[:-1] = buffer[1:]
             buffer[-1] = normalized_waveform[idx + offset]
             windows.append(buffer.copy())
-        
-        # Stack windows into batch: (block_size, seq_len)
+
+        # Stack windows into batch: (block_size, input_seq_len)
         batch = np.stack(windows, axis=0)
-        batch = batch[..., np.newaxis]  # (block_size, seq_len, 1)
-        
+        batch = batch[..., np.newaxis]  # (block_size, input_seq_len, 1)
+
         # Single model call for the entire block
         preds = model(batch, training=False)
         
@@ -236,8 +235,14 @@ def run_inference(args: argparse.Namespace):
     output_path = (results_dir / args.output).resolve()
 
     # Load config and model
-    seq_len = load_config_for_model(model_path)
-    LOGGER.info("Using seq_len=%d from config (causal context window).", seq_len)
+    seq_len, context = load_config_for_model(model_path)
+    input_seq_len = seq_len + context
+    LOGGER.info(
+        "Using seq_len=%d, context=%d (input_seq_len=%d) from config.",
+        seq_len,
+        context,
+        input_seq_len,
+    )
 
     LOGGER.info("Loading model from `%s`...", model_path)
     model = tf.keras.models.load_model(
@@ -294,19 +299,20 @@ def run_inference(args: argparse.Namespace):
         sample_rate,
     )
     
-    normalized_waveform, min_val, max_val = normalize_waveform(waveform)
+    normalized_waveform = normalize_to_unit_range(waveform)
 
     # Run streaming inference with mini-batches
     predictions, inference_time, stats = streaming_inference_optimized(
         model,
         normalized_waveform,
         seq_len,
+        context,
         block_size=args.block_size,
     )
 
     # Denormalize output
     reconstructed = np.clip(predictions, 0.0, 1.0)
-    reconstructed = denormalize_waveform(reconstructed, min_val, max_val)
+    reconstructed = denormalize_from_unit_range(reconstructed)
 
     # Write output
     LOGGER.info("Writing result to `%s`...", output_path)
@@ -341,13 +347,13 @@ def run_inference(args: argparse.Namespace):
     
     if realtime_factor >= 1.0:
         speedup_pct = (realtime_factor - 1.0) * 100
-        LOGGER.info("✓ SUCCESS: Model CAN process audio in real-time!")
+        LOGGER.info("SUCCESS: Model CAN process audio in real-time!")
         LOGGER.info("  Processing is %.1f%% faster than real-time.", speedup_pct)
         LOGGER.info("  Effective latency: %.2f ms per block", latency_ms)
         LOGGER.info("  Can be used for: Live processing, plugins, hardware")
     else:
         slowdown_pct = (1.0 - realtime_factor) * 100
-        LOGGER.info("✗ FAILURE: Model CANNOT process audio in real-time.")
+        LOGGER.info("FAILURE: Model CANNOT process audio in real-time.")
         LOGGER.info("  Processing is %.1f%% slower than real-time.", slowdown_pct)
         LOGGER.info("  Need to speed up by %.2f x to achieve real-time.", 1.0 / realtime_factor)
         LOGGER.info("")

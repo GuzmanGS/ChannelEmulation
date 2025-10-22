@@ -15,7 +15,12 @@ PROJECT_ROOT = CURRENT_DIR.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from main import ModelMetadata  # noqa: F401 - ensure layer registration
+from dataset import (
+    compute_context_length,
+    denormalize_from_unit_range,
+    normalize_to_unit_range,
+)
+from main import ModelMetadata, coerce_dilations  # noqa: F401 - ensure layer registration
 from tcn import TCN  # noqa: F401 - required to deserialize custom layer
 
 LOGGER = logging.getLogger(__name__)
@@ -49,8 +54,8 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_config_for_model(model_path: Path) -> int:
-    """Load seq_len from the config file matching the model name."""
+def load_config_for_model(model_path: Path) -> Tuple[int, int]:
+    """Load seq_len and context from the config file matching the model name."""
     config_path = CONFIGS_DIR / f"{model_path.stem}.json"
     if not config_path.exists():
         raise FileNotFoundError(
@@ -68,7 +73,16 @@ def load_config_for_model(model_path: Path) -> int:
     if seq_len <= 0:
         raise ValueError("`seq_len` must be a positive integer in the config.")
     
-    return seq_len
+    model_cfg = config.get("model", {})
+    kernel_size = int(model_cfg.get("kernel_size", 3))
+    nb_stacks = int(model_cfg.get("nb_stacks", 1))
+    dilations_cfg = model_cfg.get("dilations")
+    if dilations_cfg is None:
+        raise ValueError("Model config must include `dilations` to derive context.")
+    dilations = coerce_dilations(dilations_cfg)
+    context = compute_context_length(kernel_size, dilations, nb_stacks)
+
+    return seq_len, context
 
 
 def load_waveform(path: Path) -> Tuple[np.ndarray, int]:
@@ -82,28 +96,11 @@ def load_waveform(path: Path) -> Tuple[np.ndarray, int]:
     return waveform, sr
 
 
-def normalize_waveform(waveform: np.ndarray) -> Tuple[np.ndarray, float, float]:
-    """Min-max normalize waveform to [0, 1] and return normalization parameters."""
-    min_val = float(np.min(waveform))
-    max_val = float(np.max(waveform))
-    if np.isclose(max_val, min_val):
-        return np.zeros_like(waveform, dtype=np.float32), min_val, max_val
-    normalized = (waveform - min_val) / (max_val - min_val)
-    return normalized.astype(np.float32), min_val, max_val
-
-
-def denormalize_waveform(waveform: np.ndarray, min_val: float, max_val: float) -> np.ndarray:
-    """Denormalize waveform from [0, 1] back to original range."""
-    if np.isclose(max_val, min_val):
-        return np.full_like(waveform, fill_value=min_val, dtype=np.float32)
-    denormalized = waveform * (max_val - min_val) + min_val
-    return denormalized.astype(np.float32)
-
-
 def sample_by_sample_inference(
     model: tf.keras.Model,
     normalized_waveform: np.ndarray,
     seq_len: int,
+    context: int,
 ) -> Tuple[np.ndarray, float]:
     """
     Process audio sample-by-sample to simulate real-time streaming.
@@ -113,7 +110,8 @@ def sample_by_sample_inference(
         elapsed_time: Total computation time in seconds
     """
     num_samples = len(normalized_waveform)
-    buffer = np.zeros(seq_len, dtype=np.float32)
+    input_seq_len = seq_len + context
+    buffer = np.zeros(input_seq_len, dtype=np.float32)
     outputs = np.zeros(num_samples, dtype=np.float32)
     
     LOGGER.info("Starting sample-by-sample inference on %d samples...", num_samples)
@@ -128,8 +126,8 @@ def sample_by_sample_inference(
         buffer[:-1] = buffer[1:]
         buffer[-1] = normalized_waveform[idx]
         
-        # Prepare input window: (1, seq_len, 1)
-        window = buffer.reshape(1, seq_len, 1)
+        # Prepare input window: (1, input_seq_len, 1)
+        window = buffer.reshape(1, input_seq_len, 1)
         
         # Run model inference
         pred = model(window, training=False)
@@ -192,8 +190,14 @@ def run_inference(args: argparse.Namespace):
     output_path = (results_dir / args.output).resolve()
 
     # Load config and model
-    seq_len = load_config_for_model(model_path)
-    LOGGER.info("Using seq_len=%d from config (buffer size for causal processing).", seq_len)
+    seq_len, context = load_config_for_model(model_path)
+    input_seq_len = seq_len + context
+    LOGGER.info(
+        "Using seq_len=%d, context=%d (input_seq_len=%d) from config.",
+        seq_len,
+        context,
+        input_seq_len,
+    )
 
     LOGGER.info("Loading model from `%s`...", model_path)
     model = tf.keras.models.load_model(
@@ -250,18 +254,19 @@ def run_inference(args: argparse.Namespace):
         sample_rate,
     )
     
-    normalized_waveform, min_val, max_val = normalize_waveform(waveform)
+    normalized_waveform = normalize_to_unit_range(waveform)
 
     # Run sample-by-sample inference
     predictions, inference_time = sample_by_sample_inference(
         model,
         normalized_waveform,
         seq_len,
+        context,
     )
 
     # Denormalize output
     reconstructed = np.clip(predictions, 0.0, 1.0)
-    reconstructed = denormalize_waveform(reconstructed, min_val, max_val)
+    reconstructed = denormalize_from_unit_range(reconstructed)
 
     # Write output
     LOGGER.info("Writing result to `%s`...", output_path)
@@ -286,13 +291,13 @@ def run_inference(args: argparse.Namespace):
     
     if realtime_factor >= 1.0:
         speedup_pct = (realtime_factor - 1.0) * 100
-        LOGGER.info("✓ SUCCESS: Model CAN process audio in real-time!")
+        LOGGER.info("SUCCESS: Model CAN process audio in real-time!")
         LOGGER.info("  Processing is %.1f%% faster than real-time.", speedup_pct)
         LOGGER.info("  Latency budget: %.3f ms per sample", 1000.0 / sample_rate)
         LOGGER.info("  Actual latency: %.3f ms per sample", 1000.0 * inference_time / original_length)
     else:
         slowdown_pct = (1.0 - realtime_factor) * 100
-        LOGGER.info("✗ FAILURE: Model CANNOT process audio in real-time.")
+        LOGGER.info("FAILURE: Model CANNOT process audio in real-time.")
         LOGGER.info("  Processing is %.1f%% slower than real-time.", slowdown_pct)
         LOGGER.info("  Need to speed up by %.2f x to achieve real-time.", 1.0 / realtime_factor)
     
