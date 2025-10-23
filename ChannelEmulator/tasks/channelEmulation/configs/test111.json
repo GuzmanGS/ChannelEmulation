@@ -1,6 +1,6 @@
 ﻿{
   "data": {
-    "seq_len": 4800,
+    "seq_len": 9600,
     "overlap": 0.5,
     "val_split": 0.1,
     "limit": null

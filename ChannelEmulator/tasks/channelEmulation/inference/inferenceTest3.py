@@ -1,4 +1,5 @@
 import argparse
+import argparse
 import json
 import logging
 import sys
@@ -14,15 +15,14 @@ PROJECT_ROOT = CURRENT_DIR.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from main import ModelMetadata, coerce_dilations  # noqa: F401 - ensure layer registration
-from tcn import TCN  # noqa: F401 - required to deserialize custom layer
-
 from dataset import (
     compute_context_length,
     denormalize_from_unit_range,
     frame_with_context,
     normalize_to_unit_range,
 )
+from main import ModelMetadata, coerce_dilations  # noqa: F401 - ensure layer registration
+from tcn import TCN  # noqa: F401 - required to deserialize custom layer
 
 LOGGER = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         required=True,
-        help="Name of the .keras file under savedModels/ (e.g. wavenet3.keras).",
+        help="Name of the .keras file under savedModels/ (e.g. test2.keras).",
     )
     parser.add_argument(
         "--input",
@@ -50,10 +50,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         required=True,
-        help=(
-            "Unused placeholder to keep compatibility. "
-            "Outputs are stored as <input>_inf.wav under data/results/<model-name>/."
-        ),
+        help="Filename for the output waveform (saved in data/results/<model-name>/).",
     )
     parser.add_argument(
         "--batch-size",
@@ -65,16 +62,16 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_config_for_model(model_path: Path) -> Tuple[int, int, int]:
-    """Resolve seq_len, hop_len, and context (in samples) from the config file."""
+    """Load seq_len, hop_len, and context from the config file matching the model name."""
     config_path = CONFIGS_DIR / f"{model_path.stem}.json"
     if not config_path.exists():
         raise FileNotFoundError(
             f"Configuration file `{config_path.name}` was not found in `{CONFIGS_DIR}`.\n"
             "Ensure the config shares the same base name as the saved model."
         )
-    # Allow BOM-prefixed files saved by some Windows editors
     with config_path.open("r", encoding="utf-8-sig") as handle:
         config = json.load(handle)
+    
     data_cfg = config.get("data", {})
     try:
         seq_len = int(data_cfg["seq_len"])
@@ -110,6 +107,7 @@ def load_config_for_model(model_path: Path) -> Tuple[int, int, int]:
 
 
 def load_waveform(path: Path) -> Tuple[np.ndarray, int]:
+    """Load a mono WAV file and return the waveform and sample rate."""
     audio_bytes = tf.io.read_file(str(path))
     waveform, sample_rate = tf.audio.decode_wav(audio_bytes)
     sr = int(sample_rate.numpy())
@@ -119,7 +117,13 @@ def load_waveform(path: Path) -> Tuple[np.ndarray, int]:
     return waveform, sr
 
 
-def frame_audio(waveform: np.ndarray, frame_length: int, frame_step: int, context: int) -> np.ndarray:
+def frame_audio(
+    waveform: np.ndarray,
+    frame_length: int,
+    frame_step: int,
+    context: int,
+) -> np.ndarray:
+    """Frame audio into overlapping windows including causal context."""
     return frame_with_context(
         waveform,
         frame_length,
@@ -130,6 +134,7 @@ def frame_audio(waveform: np.ndarray, frame_length: int, frame_step: int, contex
 
 
 def overlap_add(frames: np.ndarray, frame_step: int, original_length: int) -> np.ndarray:
+    """Reconstruct audio from overlapping frames using overlap-add."""
     frame_length = frames.shape[1]
     total_length = frame_step * (frames.shape[0] - 1) + frame_length
     aggregate = np.zeros(total_length, dtype=np.float32)
@@ -146,13 +151,18 @@ def overlap_add(frames: np.ndarray, frame_step: int, original_length: int) -> np
     return reconstructed[:original_length]
 
 
-def ensure_results_dir():
-    DATA_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+def ensure_results_dir(model_name: str) -> Path:
+    """Ensure the results directory exists for the given model."""
+    dest = DATA_RESULTS_DIR / model_name
+    dest.mkdir(parents=True, exist_ok=True)
+    return dest
 
 
 def run_inference(args: argparse.Namespace):
+    """Main inference pipeline."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
 
+    # Resolve paths
     model_path = (SAVED_MODELS_DIR / args.model).resolve()
     if not model_path.exists():
         raise FileNotFoundError(f"Saved model `{model_path}` not found.")
@@ -161,12 +171,10 @@ def run_inference(args: argparse.Namespace):
     if not input_path.exists():
         raise FileNotFoundError(f"Input WAV `{input_path}` not found.")
 
-    ensure_results_dir()
-    model_results_dir = DATA_RESULTS_DIR / model_path.stem
-    model_results_dir.mkdir(parents=True, exist_ok=True)
-    input_stem = Path(args.input).stem
-    output_path = (model_results_dir / f"{input_stem}_inf.wav").resolve()
+    results_dir = ensure_results_dir(model_path.stem)
+    output_path = (results_dir / args.output).resolve()
 
+    # Load config and model
     seq_len, hop_len, context = load_config_for_model(model_path)
     input_seq_len = seq_len + context
     LOGGER.info(
@@ -183,10 +191,11 @@ def run_inference(args: argparse.Namespace):
         custom_objects={"TCN": TCN, "ModelMetadata": ModelMetadata},
         compile=False,
     )
-    
+
     LOGGER.info("Model architecture:")
     model.summary()
 
+    # Load and preprocess input audio
     LOGGER.info("Loading input waveform `%s`...", input_path)
     waveform, sample_rate = load_waveform(input_path)
     metadata_layer = None
@@ -224,6 +233,7 @@ def run_inference(args: argparse.Namespace):
     original_length = waveform.shape[0]
     normalized_waveform = normalize_to_unit_range(waveform)
 
+    # Frame audio into windows
     LOGGER.info("Framing audio into windows...")
     frames = frame_audio(normalized_waveform, seq_len, hop_len, context)
     if frames.size == 0:
@@ -231,27 +241,30 @@ def run_inference(args: argparse.Namespace):
 
     frames = frames[..., np.newaxis]  # (num_frames, input_seq_len, 1)
 
+    # Run inference
     LOGGER.info("Running inference on %d frame(s)...", frames.shape[0])
     inference_start = time.perf_counter()
     predictions = model.predict(frames, batch_size=args.batch_size, verbose=0)
     predictions = np.squeeze(np.asarray(predictions), axis=-1)
 
+    # Reconstruct audio
     LOGGER.info("Reconstructing waveform from overlapping windows...")
     reconstructed = overlap_add(predictions, hop_len, original_length)
     reconstructed = np.clip(reconstructed, 0.0, 1.0)
     reconstructed = denormalize_from_unit_range(reconstructed)
 
+    # Write output
     LOGGER.info("Writing result to `%s`...", output_path)
     audio_tensor = tf.convert_to_tensor(reconstructed[:, np.newaxis], dtype=tf.float32)
     wav_bytes = tf.audio.encode_wav(audio_tensor, sample_rate)
     tf.io.write_file(str(output_path), wav_bytes)
+    
     elapsed = time.perf_counter() - inference_start
-
     audio_duration = original_length / sample_rate
     realtime_factor = audio_duration / elapsed if elapsed > 0 else float("inf")
 
     LOGGER.info(
-        "Inference complete in %.3f s (audio duration %.3f s, real-time factor %.2f). Saved to `%s`.",
+        "Inference complete in %.3f s (audio duration %.3f s, real-time factor %.2f x). Saved to `%s`.",
         elapsed,
         audio_duration,
         realtime_factor,

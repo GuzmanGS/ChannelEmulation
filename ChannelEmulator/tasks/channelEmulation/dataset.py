@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 import tensorflow as tf
@@ -13,6 +13,95 @@ DEFAULT_SAMPLE_RATE = 16_000
 LOGGER = logging.getLogger(__name__)
 
 
+def normalize_to_unit_range(waveform: np.ndarray) -> np.ndarray:
+    """Map waveform values from [-1, 1] to [0, 1] without altering dynamics."""
+    if waveform.ndim != 1:
+        raise ValueError("Expected a 1-D waveform for normalization.")
+    waveform = waveform.astype(np.float32, copy=False)
+    normalized = 0.5 * (waveform + 1.0)
+    return np.clip(normalized, 0.0, 1.0, out=normalized)
+
+
+def denormalize_from_unit_range(waveform: np.ndarray) -> np.ndarray:
+    """Map waveform values from [0, 1] back to [-1, 1]."""
+    if waveform.ndim != 1:
+        raise ValueError("Expected a 1-D waveform for denormalization.")
+    waveform = waveform.astype(np.float32, copy=False)
+    restored = 2.0 * waveform - 1.0
+    return np.clip(restored, -1.0, 1.0, out=restored)
+
+
+def compute_receptive_field(
+    kernel_size: int,
+    dilations: Sequence[int],
+    nb_stacks: int,
+) -> int:
+    """Return the total receptive field (in samples) of the TCN."""
+    if kernel_size < 1:
+        raise ValueError("`kernel_size` must be a positive integer.")
+    if nb_stacks < 1:
+        raise ValueError("`nb_stacks` must be a positive integer.")
+    if not dilations:
+        raise ValueError("`dilations` must contain at least one value.")
+
+    kernel_extent = max(0, kernel_size - 1)
+    dilation_sum = sum(int(d) for d in dilations)
+    if dilation_sum <= 0:
+        raise ValueError("`dilations` must contain positive integers.")
+
+    per_block = 2 * kernel_extent  # each residual block has two causal convolutions
+    receptive_field = 1 + per_block * nb_stacks * dilation_sum
+    return receptive_field
+
+
+def compute_context_length(
+    kernel_size: int,
+    dilations: Sequence[int],
+    nb_stacks: int,
+) -> int:
+    """Return the number of past samples required as causal context."""
+    receptive_field = compute_receptive_field(kernel_size, dilations, nb_stacks)
+    return max(0, receptive_field - 1)
+
+
+def frame_with_context(
+    waveform: np.ndarray,
+    frame_length: int,
+    frame_step: int,
+    *,
+    context: int = 0,
+    pad_value: float = 0.0,
+) -> np.ndarray:
+    """Slice a 1-D waveform into contextual frames with optional zero causal padding."""
+    if frame_length <= 0:
+        raise ValueError("`frame_length` must be a positive integer.")
+    if frame_step <= 0:
+        raise ValueError("`frame_step` must be a positive integer.")
+    if context < 0:
+        raise ValueError("`context` must be non-negative.")
+
+    waveform = waveform.astype(np.float32, copy=False)
+    total_length = int(waveform.shape[0])
+    if total_length == 0:
+        return np.zeros((0, frame_length + context), dtype=np.float32)
+
+    frame_count = int(np.ceil(total_length / frame_step))
+    frames = np.full(
+        (frame_count, frame_length + context),
+        pad_value,
+        dtype=np.float32,
+    )
+
+    for index in range(frame_count):
+        start = index * frame_step
+        end = start + frame_length
+        indices = np.arange(start - context, end, dtype=np.int64)
+        valid = (indices >= 0) & (indices < total_length)
+        frames[index, valid] = waveform[indices[valid]]
+
+    return frames
+
+
 @dataclass
 class SequenceDataset:
     x_train: np.ndarray
@@ -20,14 +109,16 @@ class SequenceDataset:
     x_val: np.ndarray
     y_val: np.ndarray
     sample_rate: int
-    seq_len: int
+    input_seq_len: int
+    target_seq_len: int
+    context: int
 
 
 def prepare_sequence_dataset(
     data_root: Path,
     seq_len: int,
     hop_len: int,
-    sample_rate: Optional[int] = None,
+    context: int,
     val_split: float = 0.1,
     limit_total_segments: Optional[int] = None,
     seed: int = 42,
@@ -41,6 +132,8 @@ def prepare_sequence_dataset(
         raise ValueError("`hop_len` must be a positive integer.")
     if not 0 < val_split < 1:
         raise ValueError("`val_split` must be between 0 and 1.")
+    if context < 0:
+        raise ValueError("`context` must be non-negative.")
 
     data_root = Path(data_root)
     input_dir, target_dir = _ensure_structure(data_root)
@@ -52,13 +145,19 @@ def prepare_sequence_dataset(
         input_filename=input_filename,
         output_filename=output_filename,
     )
-    resolved_sample_rate: Optional[int] = sample_rate
+    resolved_sample_rate: Optional[int] = None
 
     if not wav_pairs:
         LOGGER.warning(
             "No WAV pairs found in `%s`. Falling back to a synthetic dataset.", data_root
         )
-        return _synthetic_dataset(seq_len, val_split, rng, sample_rate or DEFAULT_SAMPLE_RATE)
+        return _synthetic_dataset(
+            seq_len=seq_len,
+            val_split=val_split,
+            rng=rng,
+            sample_rate=DEFAULT_SAMPLE_RATE,
+            context=context,
+        )
 
     segments_x: List[np.ndarray] = []
     segments_y: List[np.ndarray] = []
@@ -68,8 +167,8 @@ def prepare_sequence_dataset(
         input_waveform, sr_in = _load_waveform(input_path, resolved_sample_rate)
         target_waveform, sr_out = _load_waveform(target_path, resolved_sample_rate or sr_in)
 
-        input_waveform = _normalize_waveform(input_waveform)
-        target_waveform = _normalize_waveform(target_waveform)
+        input_waveform = normalize_to_unit_range(input_waveform)
+        target_waveform = normalize_to_unit_range(target_waveform)
 
         if sr_in != sr_out:
             raise ValueError(
@@ -85,18 +184,12 @@ def prepare_sequence_dataset(
                 f"Input `{input_path.name}` and target `{target_path.name}` must have identical length."
             )
 
-        trimmed_len = len(input_waveform)
-        if trimmed_len < seq_len:
-            LOGGER.warning(
-                "Skipping pair `%s` because trimmed length (%d) is shorter than seq_len (%d).",
-                input_path.name,
-                trimmed_len,
-                seq_len,
-            )
-            continue
-
-        input_frames = _frame_waveform(input_waveform, seq_len, hop_len)
-        target_frames = _frame_waveform(target_waveform, seq_len, hop_len)
+        input_frames = frame_with_context(
+            input_waveform, seq_len, hop_len, context=context, pad_value=0.0
+        )
+        target_frames = frame_with_context(
+            target_waveform, seq_len, hop_len, context=0, pad_value=0.0
+        )
 
         frame_count = min(len(input_frames), len(target_frames))
         if frame_count == 0:
@@ -125,7 +218,13 @@ def prepare_sequence_dataset(
             "No usable windows extracted from `%s`. Falling back to a synthetic dataset.",
             data_root,
         )
-        return _synthetic_dataset(seq_len, val_split, rng, resolved_sample_rate or DEFAULT_SAMPLE_RATE)
+        return _synthetic_dataset(
+            seq_len=seq_len,
+            val_split=val_split,
+            rng=rng,
+            sample_rate=resolved_sample_rate or DEFAULT_SAMPLE_RATE,
+            context=context,
+        )
 
     x = _stack_segments(segments_x)
     y = _stack_segments(segments_y)
@@ -135,7 +234,13 @@ def prepare_sequence_dataset(
             "Only %d window(s) extracted. Need at least 2 for train/validation split; using synthetic data.",
             x.shape[0],
         )
-        return _synthetic_dataset(seq_len, val_split, rng, resolved_sample_rate or DEFAULT_SAMPLE_RATE)
+        return _synthetic_dataset(
+            seq_len=seq_len,
+            val_split=val_split,
+            rng=rng,
+            sample_rate=resolved_sample_rate or DEFAULT_SAMPLE_RATE,
+            context=context,
+        )
 
     x = x[..., np.newaxis].astype(np.float32)
     y = y[..., np.newaxis].astype(np.float32)
@@ -149,19 +254,25 @@ def prepare_sequence_dataset(
         y = y[:dataset_size]
 
     indices = rng.permutation(dataset_size)
+    LOGGER.info("Shuffling %d window(s) with RNG seed %d.", dataset_size, seed)
     x = x[indices]
     y = y[indices]
 
     val_count = max(1, int(round(dataset_size * val_split)))
     val_count = min(val_count, dataset_size - 1)
 
+    input_seq_len = x.shape[1]
+    target_seq_len = y.shape[1]
+
     return SequenceDataset(
         x_train=x[:-val_count],
         y_train=y[:-val_count],
         x_val=x[-val_count:],
         y_val=y[-val_count:],
-        sample_rate=resolved_sample_rate or sample_rate or DEFAULT_SAMPLE_RATE,
-        seq_len=seq_len,
+        sample_rate=resolved_sample_rate or DEFAULT_SAMPLE_RATE,
+        input_seq_len=int(input_seq_len),
+        target_seq_len=int(target_seq_len),
+        context=int(context),
     )
 
 
@@ -230,22 +341,6 @@ def _load_waveform(path: Path, enforce_sample_rate: Optional[int]) -> Tuple[np.n
     return waveform.numpy(), sr
 
 
-def _frame_waveform(waveform: np.ndarray, seq_len: int, hop_len: int) -> np.ndarray:
-    tensor = tf.convert_to_tensor(waveform, dtype=tf.float32)
-    frames = tf.signal.frame(tensor, seq_len, hop_len, pad_end=True, pad_value=0.0)
-    return frames.numpy()
-
-
-def _normalize_waveform(waveform: np.ndarray) -> np.ndarray:
-    waveform = waveform.astype(np.float32)
-    min_val = float(np.min(waveform))
-    max_val = float(np.max(waveform))
-    if np.isclose(max_val, min_val):
-        return np.zeros_like(waveform, dtype=np.float32)
-    normalized = (waveform - min_val) / (max_val - min_val)
-    return np.clip(normalized, 0.0, 1.0).astype(np.float32)
-
-
 def _stack_segments(segments: List[np.ndarray]) -> np.ndarray:
     if len(segments) == 1:
         return segments[0]
@@ -257,19 +352,24 @@ def _synthetic_dataset(
     val_split: float,
     rng: np.random.Generator,
     sample_rate: int,
+    context: int,
 ) -> SequenceDataset:
     num_samples = max(128, seq_len // 2)
-    inputs = rng.normal(scale=0.5, size=(num_samples, seq_len)).astype(np.float32)
+    input_seq_len = seq_len + max(0, context)
+    raw_inputs = rng.normal(scale=0.5, size=(num_samples, input_seq_len)).astype(np.float32)
+    raw_inputs = np.clip(raw_inputs, -1.0, 1.0, out=raw_inputs)
 
     # Simple FIR channel with small added noise.
     kernel = np.array([0.85, -0.3, 0.12], dtype=np.float32)
-    targets = np.array(
-        [np.convolve(row, kernel, mode="same") for row in inputs], dtype=np.float32
+    raw_targets = np.array(
+        [np.convolve(row[:seq_len], kernel, mode="same") for row in raw_inputs],
+        dtype=np.float32,
     )
-    targets += 0.01 * rng.normal(size=targets.shape).astype(np.float32)
+    raw_targets += 0.01 * rng.normal(size=raw_targets.shape).astype(np.float32)
+    raw_targets = np.clip(raw_targets, -1.0, 1.0, out=raw_targets)
 
-    inputs = _normalize_waveform(inputs)[..., np.newaxis]
-    targets = _normalize_waveform(targets)[..., np.newaxis]
+    inputs = np.stack([normalize_to_unit_range(row) for row in raw_inputs], axis=0)[..., np.newaxis]
+    targets = np.stack([normalize_to_unit_range(row) for row in raw_targets], axis=0)[..., np.newaxis]
 
     indices = rng.permutation(num_samples)
     inputs = inputs[indices]
@@ -284,5 +384,7 @@ def _synthetic_dataset(
         x_val=inputs[-val_count:],
         y_val=targets[-val_count:],
         sample_rate=sample_rate,
-        seq_len=seq_len,
+        input_seq_len=input_seq_len,
+        target_seq_len=seq_len,
+        context=max(0, context),
     )
