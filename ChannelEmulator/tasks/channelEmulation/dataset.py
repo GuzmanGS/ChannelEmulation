@@ -70,7 +70,7 @@ def frame_with_context(
     frame_step: int,
     *,
     context: int = 0,
-    pad_value: float = 0.0,
+    pad_value: float = 0.5,
 ) -> np.ndarray:
     """Slice a 1-D waveform into contextual frames with optional zero causal padding."""
     if frame_length <= 0:
@@ -185,10 +185,10 @@ def prepare_sequence_dataset(
             )
 
         input_frames = frame_with_context(
-            input_waveform, seq_len, hop_len, context=context, pad_value=0.0
+            input_waveform, seq_len, hop_len, context=context, pad_value=0.5
         )
         target_frames = frame_with_context(
-            target_waveform, seq_len, hop_len, context=0, pad_value=0.0
+            target_waveform, seq_len, hop_len, context=0, pad_value=0.5
         )
 
         frame_count = min(len(input_frames), len(target_frames))

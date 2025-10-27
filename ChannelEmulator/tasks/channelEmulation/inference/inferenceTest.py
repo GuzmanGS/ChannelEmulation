@@ -125,7 +125,7 @@ def frame_audio(waveform: np.ndarray, frame_length: int, frame_step: int, contex
         frame_length,
         frame_step,
         context=context,
-        pad_value=0.0,
+        pad_value=0.5,
     )
 
 

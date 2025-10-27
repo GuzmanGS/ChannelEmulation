@@ -131,7 +131,7 @@ def streaming_inference_optimized(
     """
     num_samples = len(normalized_waveform)
     input_seq_len = seq_len + context
-    buffer = np.zeros(input_seq_len, dtype=np.float32)
+    buffer = np.full(input_seq_len, 0.5, dtype=np.float32)
     outputs = np.zeros(num_samples, dtype=np.float32)
     
     LOGGER.info("Starting streaming inference on %d samples (block_size=%d)...", 
@@ -299,9 +299,9 @@ def run_inference(args: argparse.Namespace):
         sample_rate,
     )
     
+    # Run streaming inference with mini-batches
     normalized_waveform = normalize_to_unit_range(waveform)
 
-    # Run streaming inference with mini-batches
     predictions, inference_time, stats = streaming_inference_optimized(
         model,
         normalized_waveform,

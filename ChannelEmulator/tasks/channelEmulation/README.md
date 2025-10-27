@@ -38,9 +38,10 @@ To render processed audio with a trained model:
 
 ```bash
 python inference/inferenceTest.py --model wavenet3.keras --input rawAudio.wav --output fxAudioVFuzz_pred.wav
+python inference/inferenceRealtime.py --model wavenet3.keras --input rawAudio.wav --output fxAudioVFuzz_rt.wav
 ```
 
-The script loads the config with the same base name as the model, applies the TCN frame by frame, and writes the reconstructed waveform to `tasks/channelEmulation/data/results/<model-name>/<input>_inf.wav` (the `--output` name is ignored in favor of this convention).
+Both scripts load the config with the same base name as the model, normalise the input waveform to `[0, 1]`, ensure the input and target lengths match, form the necessary batches/windows, and write reconstructed (denormalised) audio to `tasks/channelEmulation/data/results/<model-name>/`.
 
 ### Notes
 

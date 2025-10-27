@@ -200,6 +200,16 @@ def build_model(
     config_metadata: dict,
 ):
     inputs = tf.keras.Input(shape=(input_seq_len, input_dim), name="input_waveform")
+
+    # Linear projection of the mono input (no bias, no activation).
+    x = tf.keras.layers.Conv1D(
+        filters=input_dim,
+        kernel_size=1,
+        activation=None,
+        use_bias=True,
+        name="input_linear_projection",
+    )(inputs)
+
     tcn_layer = TCN(
         nb_filters=nb_filters,
         kernel_size=kernel_size,
@@ -211,8 +221,17 @@ def build_model(
         return_sequences=True,
         name="tcn_backbone",
     )
-    x = tcn_layer(inputs)
-    x = tf.keras.layers.Dense(output_dim, activation="linear", name="channel_output")(x)
+    x = tcn_layer(x)
+
+    # Collapse filters back to a single channel via linear projection with bias.
+    x = tf.keras.layers.Conv1D(
+        filters=output_dim,
+        kernel_size=1,
+        activation=None,
+        use_bias=True,
+        name="output_linear_projection",
+    )(x)
+
     if context > 0:
         x = tf.keras.layers.Cropping1D(cropping=(context, 0), name="context_crop")(x)
     outputs = ModelMetadata(
@@ -427,8 +446,11 @@ def run(args: argparse.Namespace):
         shuffle=True,
     )
 
-    if len(dataset.x_val):
+    # Solo añadir validation_data si hay datos de validación
+    if len(dataset.x_val) > 0:
         fit_kwargs["validation_data"] = (dataset.x_val, dataset.y_val)
+    else:
+        LOGGER.info("Training without validation data (val_split=0)")
 
     history = model.fit(**fit_kwargs)
 
@@ -461,15 +483,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         type=str,
         required=True,
-        help="Target WAV filename located under the data/output directory.",
+        help="Output WAV filename located under the data/output directory.",
     )
     return parser
 
 
-def main():
-    args = build_parser().parse_args()
-    run(args)
-
-
 if __name__ == "__main__":
-    main()
+    run(build_parser().parse_args())
