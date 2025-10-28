@@ -92,6 +92,47 @@ class PreEmphasisESRLoss(tf.keras.losses.Loss):
 
 
 @tf.keras.utils.register_keras_serializable(package="channel_emulation")
+class ESRMSELoss(tf.keras.losses.Loss):
+    """Combination of ESR (with pre-emphasis) and time-domain MSE."""
+
+    def __init__(
+        self,
+        *,
+        coefficient: float,
+        epsilon: float = 1e-8,
+        esr_weight: float = 0.5,
+        mse_weight: float = 0.5,
+        name: str = "esr_mse_loss",
+    ):
+        super().__init__(name=name)
+        self.coefficient = _validate_pre_emphasis(coefficient)
+        if epsilon <= 0.0:
+            raise ValueError("Epsilon must be positive to stabilise the ESR denominator.")
+        self.epsilon = float(epsilon)
+        self.esr_weight = float(esr_weight)
+        self.mse_weight = float(mse_weight)
+        self._esr = PreEmphasisESRLoss(coefficient=self.coefficient, epsilon=self.epsilon)
+        self._mse = tf.keras.losses.MeanSquaredError()
+
+    def call(self, y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:
+        esr_value = self._esr(y_true, y_pred)
+        mse_value = self._mse(y_true, y_pred)
+        return self.esr_weight * esr_value + self.mse_weight * mse_value
+
+    def get_config(self) -> dict:
+        config = super().get_config()
+        config.update(
+            {
+                "coefficient": self.coefficient,
+                "epsilon": self.epsilon,
+                "esr_weight": self.esr_weight,
+                "mse_weight": self.mse_weight,
+            }
+        )
+        return config
+
+
+@tf.keras.utils.register_keras_serializable(package="channel_emulation")
 class ModelMetadata(tf.keras.layers.Layer):
     """Identity layer that stores training metadata (sample rate, config)."""
 
@@ -248,9 +289,20 @@ def build_model(
     model.sample_rate = int(sample_rate)
     model.config_metadata = config_metadata
     optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate, clipnorm=1.0)
-    loss = PreEmphasisESRLoss(coefficient=pre_emphasis, epsilon=loss_epsilon)  # audio-friendly loss function
-    # Alternative simple loss: loss = "mean_squared_error"
-    model.compile(optimizer=optimizer, loss=loss)
+    loss = ESRMSELoss(
+        coefficient=pre_emphasis,
+        epsilon=loss_epsilon,
+        esr_weight=0.5,
+        mse_weight=0.5,
+    )
+    model.compile(
+        optimizer=optimizer,
+        loss=loss,
+        metrics=[
+            PreEmphasisESRLoss(coefficient=pre_emphasis, epsilon=loss_epsilon, name="esr"),
+            tf.keras.metrics.MeanSquaredError(name="mse"),
+        ],
+    )
     return model
 
 

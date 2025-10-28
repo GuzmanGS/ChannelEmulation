@@ -279,7 +279,7 @@ def main():
     wav_path = os.path.join(output_dir, f"{base_filename}.wav")
 
     # Construcción de la señal
-    silencio0 = zeros_dur(fs, DUR_SIL * 5)
+    silencio0 = zeros_dur(fs, DUR_SIL)
 
     tSwp = linspace_dur(fs, DUR_SWP)
     sweep_sig = sweep_senoidal(tSwp, F0_SWP, F1_SWP, DUR_SWP)
