@@ -4,12 +4,18 @@
 import argparse
 import numpy as np
 import os
+from pathlib import Path
 import soundfile as sf
 import matplotlib.pyplot as plt
 from scipy import signal
 from scipy.interpolate import interp1d
 import warnings
 warnings.filterwarnings('ignore')
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+DATA_DIR = SCRIPT_DIR.parent
+INPUT_DIR = DATA_DIR / "input"
+OUTPUT_DIR = DATA_DIR / "output"
 
 # ==========================================================
 # AUDIO I/O FUNCTIONS
@@ -27,7 +33,11 @@ def load_audio(filename, sample_rate=None):
         fs: Sample rate
     """
     if filename.lower().endswith('.wav'):
-        audio_data, fs = sf.read(filename)
+        audio_data, fs = sf.read(filename, always_2d=False)
+        if audio_data.ndim > 1:
+            if audio_data.shape[1] != 1:
+                print(f"Loaded WAV: {filename} with {audio_data.shape[1]} channels; downmixing to mono.")
+            audio_data = np.mean(audio_data, axis=1)
         print(f"Loaded WAV: {filename} (fs={fs} Hz, samples={len(audio_data)})")
         return audio_data.astype(np.float32), fs
     
@@ -114,7 +124,7 @@ def save_audio(audio_data, filename, fs, bits=None):
 # ==========================================================
 # AUDIO EFFECTS
 # ==========================================================
-def apply_delay(audio, fs, delay_time=0.3, feedback=0.4, mix=0.5):
+def apply_delay(audio, fs, delay_time=0.3, feedback=0.4, mix=0.5, output_gain=1.0):
     """
     Apply delay effect.
     
@@ -136,7 +146,7 @@ def apply_delay(audio, fs, delay_time=0.3, feedback=0.4, mix=0.5):
         output[i] = audio[i] + delayed_sample
     
     # Apply wet/dry mix
-    return audio * (1 - mix) + output * mix
+    return (audio * (1 - mix) + output * mix) * output_gain
 
 
 def apply_clipping(audio, threshold=0.7):
@@ -150,7 +160,7 @@ def apply_clipping(audio, threshold=0.7):
     return np.clip(audio, -threshold, threshold)
 
 
-def apply_saturation(audio, drive=2.0, mix=1.0):
+def apply_saturation(audio, drive=2.0, mix=1.0, output_gain=1.0):
     """
     Apply soft saturation/overdrive.
     
@@ -162,10 +172,10 @@ def apply_saturation(audio, drive=2.0, mix=1.0):
     driven = audio * drive
     saturated = np.tanh(driven)
     
-    return audio * (1 - mix) + saturated * mix
+    return (audio * (1 - mix) + saturated * mix) * output_gain
 
 
-def apply_compression(audio, threshold=0.5, ratio=4.0, attack=0.01, release=0.1, fs=48000):
+def apply_compression(audio, threshold=0.5, ratio=4.0, attack=0.01, release=0.1, fs=48000, output_gain=1.0):
     """
     Apply dynamic range compression.
     
@@ -185,6 +195,7 @@ def apply_compression(audio, threshold=0.5, ratio=4.0, attack=0.01, release=0.1,
     release_coeff = np.exp(-1.0 / (release * fs))
     
     smoothed_env = np.zeros_like(envelope)
+    smoothed_env[0] = envelope[0]
     for i in range(1, len(envelope)):
         if envelope[i] > smoothed_env[i-1]:
             smoothed_env[i] = envelope[i] * (1 - attack_coeff) + smoothed_env[i-1] * attack_coeff
@@ -197,10 +208,19 @@ def apply_compression(audio, threshold=0.5, ratio=4.0, attack=0.01, release=0.1,
     gain_reduction[over_threshold] = threshold + (smoothed_env[over_threshold] - threshold) / ratio
     gain_reduction[over_threshold] /= smoothed_env[over_threshold]
     
-    return audio * gain_reduction
+    return audio * gain_reduction * output_gain
 
 
-def apply_distortion(audio, drive=5.0, level=1.0, mix=1.0, distortion_type='tube'):
+def apply_distortion(
+    audio,
+    drive=5.0,
+    level=1.0,
+    mix=1.0,
+    distortion_type='tube',
+    fs=48000,
+    post_lp_cutoff=12000.0,
+    output_gain=1.0,
+):
     """
     Apply musical distortion pedal effect with multiple distortion types.
     
@@ -210,6 +230,9 @@ def apply_distortion(audio, drive=5.0, level=1.0, mix=1.0, distortion_type='tube
         level: Output level compensation (0.1-2.0)
         mix: Wet/dry mix (0=dry, 1=wet)
         distortion_type: Type of distortion ('tube', 'fuzz', 'overdrive', 'clipping')
+        fs: Sample rate for post-filtering
+        post_lp_cutoff: Post-EQ low-pass cutoff frequency in Hz (default 12 kHz)
+        output_gain: Additional output gain scaling
     
     Returns:
         Processed audio signal
@@ -288,17 +311,13 @@ def apply_distortion(audio, drive=5.0, level=1.0, mix=1.0, distortion_type='tube
         # Default: simple waveshaping
         distorted = np.tanh(driven_signal)
     
-    # Post-distortion filtering - simulate speaker/cabinet response
-    # High-frequency rolloff typical of guitar amplifiers
-    try:
-        cutoff_freq = 5000  # Hz
-        nyquist = 22050
-        normalized_cutoff = cutoff_freq / nyquist
-        if normalized_cutoff < 0.5:
-            b_filter, a_filter = signal.butter(2, normalized_cutoff, 'low')
-            distorted = signal.filtfilt(b_filter, a_filter, distorted)
-    except:
-        pass  # Skip filtering if it fails
+    # Post-distortion low-pass to tame aliasing/harshness
+    if fs and fs > 0 and post_lp_cutoff:
+        nyquist = fs / 2.0
+        cutoff = np.clip(post_lp_cutoff, 1000.0, nyquist * 0.95)
+        norm_cutoff = cutoff / nyquist
+        b_lp, a_lp = signal.butter(2, norm_cutoff, btype="lowpass")
+        distorted = signal.lfilter(b_lp, a_lp, distorted)
     
     # Level compensation - adjust output volume
     # Distortion typically reduces peak amplitude but increases RMS
@@ -308,7 +327,7 @@ def apply_distortion(audio, drive=5.0, level=1.0, mix=1.0, distortion_type='tube
     level_compensated = np.tanh(level_compensated * 0.95) / 0.95
     
     # Final wet/dry mix
-    return audio * (1 - mix) + level_compensated * mix
+    return (audio * (1 - mix) + level_compensated * mix) * output_gain
 
 
 def get_distortion_presets():
@@ -331,7 +350,7 @@ def get_distortion_presets():
     return presets
 
 
-def apply_distortion_preset(audio, preset_name):
+def apply_distortion_preset(audio, preset_name, fs=48000, post_lp_cutoff=12000.0, output_gain=1.0):
     """
     Apply distortion using a preset.
     
@@ -349,14 +368,19 @@ def apply_distortion_preset(audio, preset_name):
         return audio
     
     params = presets[preset_name]
-    return apply_distortion(audio, 
-                          drive=params['drive'],
-                          level=params['level'], 
-                          mix=params['mix'],
-                          distortion_type=params['type'])
+    return apply_distortion(
+        audio,
+        drive=params['drive'],
+        level=params['level'],
+        mix=params['mix'],
+        distortion_type=params['type'],
+        fs=fs,
+        post_lp_cutoff=post_lp_cutoff,
+        output_gain=output_gain,
+    )
 
 
-def apply_noise(audio, noise_level=0.05, noise_type='white'):
+def apply_noise(audio, noise_level=0.05, noise_type='white', output_gain=1.0):
     """
     Add noise to the signal.
     
@@ -372,18 +396,27 @@ def apply_noise(audio, noise_level=0.05, noise_type='white'):
         white_noise = np.random.normal(0, 1, len(audio))
         # Simple pink noise filter (1/f characteristic)
         b, a = signal.butter(1, 0.1, 'low')
-        noise = signal.filtfilt(b, a, white_noise) * noise_level
+        noise = signal.filtfilt(b, a, white_noise)
+        noise -= np.mean(noise)
+        noise /= np.max(np.abs(noise)) + 1e-8
+        noise *= noise_level
     elif noise_type == 'brown':
         # Brown noise (Brownian/red noise)
         white_noise = np.random.normal(0, 1, len(audio))
-        noise = np.cumsum(white_noise) * noise_level * 0.01
+        noise = np.cumsum(white_noise)
+        noise -= np.mean(noise)
+        noise /= np.max(np.abs(noise)) + 1e-8
+        noise *= noise_level
     else:
-        noise = np.random.normal(0, noise_level, len(audio))
+        noise = np.random.normal(0, 1, len(audio))
+        noise -= np.mean(noise)
+        noise /= np.max(np.abs(noise)) + 1e-8
+        noise *= noise_level
     
-    return audio + noise
+    return (audio + noise) * output_gain
 
 
-def apply_echo(audio, fs, delay_time=0.5, decay=0.3, num_echoes=3):
+def apply_echo(audio, fs, delay_time=0.5, decay=0.3, num_echoes=3, output_gain=1.0):
     """
     Apply echo effect with multiple reflections.
     
@@ -412,10 +445,10 @@ def apply_echo(audio, fs, delay_time=0.5, decay=0.3, num_echoes=3):
             extended_output[echo_delay:echo_delay+len(audio)] += audio * echo_gain
             output = extended_output
     
-    return output
+    return output * output_gain
 
 
-def apply_doppler_effect(audio, fs, speed_profile=None, max_shift=0.1):
+def apply_doppler_effect(audio, fs, speed_profile=None, max_shift=0.1, output_gain=1.0):
     """
     Apply Doppler effect simulation.
     
@@ -436,6 +469,9 @@ def apply_doppler_effect(audio, fs, speed_profile=None, max_shift=0.1):
     # Calculate time warping based on speed profile
     time_stretch = 1 + speed_profile * max_shift
     time_warped = np.cumsum(time_stretch) / fs
+    time_warped -= time_warped[0]
+    max_time = time_original[-1]
+    time_warped = np.clip(time_warped, 0.0, max_time)
     
     # Interpolate to create Doppler effect
     interp_func = interp1d(time_original, audio, kind='linear', 
@@ -446,10 +482,10 @@ def apply_doppler_effect(audio, fs, speed_profile=None, max_shift=0.1):
     # Handle NaN values
     doppler_audio = np.nan_to_num(doppler_audio)
     
-    return doppler_audio
+    return doppler_audio * output_gain
 
 
-def apply_reverb(audio, fs, room_size=0.7, damping=0.5, wet_level=0.3):
+def apply_reverb(audio, fs, room_size=0.7, damping=0.5, wet_level=0.3, output_gain=1.0):
     """
     Apply simple reverb effect using multiple delays.
     
@@ -473,7 +509,7 @@ def apply_reverb(audio, fs, room_size=0.7, damping=0.5, wet_level=0.3):
             delayed[delay_samples:] = audio[:-delay_samples] * decay
             reverb_signal += delayed
     
-    return audio + reverb_signal * wet_level
+    return (audio + reverb_signal * wet_level) * output_gain
 
 
 # ==========================================================
@@ -536,25 +572,23 @@ def main():
         parser.error("input_file and output_file are required for audio processing (use --list_presets to see available presets)")
         
     # Set up input and output directories
-    input_dir = os.path.join('..', 'input')
-    output_dir = os.path.join('..', 'output')
-    input_dir = os.path.join('..', 'input')
-    output_dir = os.path.join('..', 'output')
+    input_dir = INPUT_DIR
+    output_dir = OUTPUT_DIR
     
     # Create output directory if it doesn't exist
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    if not output_dir.exists():
+        output_dir.mkdir(parents=True, exist_ok=True)
         print(f"Created output directory: {output_dir}")
     
     # Construct full file paths
-    input_path = os.path.join(input_dir, args.input_file)
+    input_path = input_dir / args.input_file
     
     # Check if input file exists
-    if not os.path.exists(input_path):
+    if not input_path.exists():
         print(f"Error: Input file not found: {input_path}")
         print(f"Available files in {input_dir}:")
         try:
-            files = [f for f in os.listdir(input_dir) if f.endswith(('.wav', '.txt'))]
+            files = [f.name for f in input_dir.iterdir() if f.suffix.lower() in ('.wav', '.txt')]
             for f in files:
                 print(f"  - {f}")
         except:
@@ -571,7 +605,7 @@ def main():
     
     # Load input audio
     try:
-        audio, fs = load_audio(input_path, args.fs)
+        audio, fs = load_audio(str(input_path), args.fs)
         original_audio = np.copy(audio)
         print(f"Processing audio: {len(audio)} samples at {fs} Hz")
         
@@ -600,7 +634,7 @@ def main():
         print(f"Applied compression: thresh={threshold}, ratio={ratio}")
 
     if args.distort_preset:
-        audio = apply_distortion_preset(audio, args.distort_preset)
+        audio = apply_distortion_preset(audio, args.distort_preset, fs=fs)
         presets = get_distortion_presets()
         if args.distort_preset in presets:
             params = presets[args.distort_preset]
@@ -626,7 +660,7 @@ def main():
             mix = 1.0
             distortion_type = 'tube'
         
-        audio = apply_distortion(audio, drive, level, mix, distortion_type)
+        audio = apply_distortion(audio, drive, level, mix, distortion_type, fs=fs)
         print(f"Applied {distortion_type} distortion: drive={drive}, level={level}, mix={mix}")
 
     if args.noise:
@@ -658,19 +692,19 @@ def main():
     
     # Save processed audio
     try:
-        wav_file = os.path.join(output_dir, args.output_file + '.wav')
-        txt_file = os.path.join(output_dir, args.output_file + '.txt')
+        wav_file = output_dir / f"{args.output_file}.wav"
+        txt_file = output_dir / f"{args.output_file}.txt"
         
         # Output selection logic
         if args.both:
-            save_audio(audio, wav_file, fs, args.bits)
-            save_audio(audio, txt_file, fs, args.bits)
+            save_audio(audio, str(wav_file), fs, args.bits)
+            save_audio(audio, str(txt_file), fs, args.bits)
             print(f"Saved both {wav_file} and {txt_file}")
         elif args.wav:
-            save_audio(audio, wav_file, fs, args.bits)
+            save_audio(audio, str(wav_file), fs, args.bits)
             print(f"Saved WAV: {wav_file}")
         elif args.txt:
-            save_audio(audio, txt_file, fs, args.bits)
+            save_audio(audio, str(txt_file), fs, args.bits)
             print(f"Saved TXT: {txt_file}")
         
     except Exception as e:
