@@ -42,21 +42,13 @@ def display_waveforms(waveforms: list[tuple[str, Path, str]]) -> None:
                 f"Expected {reference_sr} Hz but got {sr} Hz."
             )
         time_axis = np.arange(len(waveform), dtype=np.float32) / sr
-        if idx == 0:
-            alpha = 1.0
-        elif color == "tab:blue":
-            alpha = 0.85
-        elif color == "tab:orange":
-            alpha = 0.7
-        else:
-            alpha = 0.6
         plt.plot(
             time_axis,
             waveform,
             label=label,
             linewidth=1.0,
             color=color,
-            alpha=alpha,
+            alpha=0.5,
         )
 
     plt.title("Waveform Comparison")
