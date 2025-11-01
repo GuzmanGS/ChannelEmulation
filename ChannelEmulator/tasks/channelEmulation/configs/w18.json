@@ -15,7 +15,7 @@
     "use_skip_connections": true
   },
   "training": {
-    "batch_size": 40,
+    "batch_size": 16,
     "epochs": 100,
     "patience": 20,
     "pre_emphasis": 0.95,
