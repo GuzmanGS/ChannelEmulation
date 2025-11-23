@@ -1,0 +1,20 @@
+=====Entrenar un modelo======
+cd .\ChannelEmulator\tasks\channelEmulation\ 
+python data/datasetCreation/audioFX.py input.wav output --wav --compress 0.45 6 0.01 0.20  --distort 6 0.9 0.5 tube --reverb 0.35 0.40 0.20 --delay 0.22 0.35 0.25   
+python main.py --config test11.json --input input.wav --output output.wav   
+
+=====realizar inferencia======
+python data/datasetCreation/audioFX.py 03-shortSong.wav 03-shortSong_out --wav --compress 0.45 6 0.01 0.20  --distort 6 0.9 0.5 tube --reverb 0.35 0.40 0.20 --delay 0.22 0.35 0.25
+python inference/inferenceTest.py --model test11.keras --input 03-shortSong.wav --output 03-shortSong_pred.wav            
+python display.py --output 03-shortSong_out.wav --result test11/03-shortSong_inf.wav --input 03-shortSong.wav  
+
+=====CREAR PLOT DE RANGO DE FRECUENCIA======
+python data/datasetCreation/audioGenerator.py --outfile 06-noise --wav 
+python data/datasetCreation/audioFX.py 06-noise.wav 06-noise_out --wav --compress 0.45 6 0.01 0.20  --distort 6 0.9 0.5 tube --reverb 0.35 0.40 0.20 --delay 0.22 0.35 0.25
+python inference/inferenceTest.py --model test11.keras --input 06-noise.wav --output 06-noise_inf.wav   
+python displayFT.py --input 06-noise.wav --output 06-noise_out.wav --result test11/06-noise_inf.wav --logfreq  
+
+=====CREAR PLOT DE armónicos======
+python data/datasetCreation/audioFX.py 02-note.wav 02-note_out --wav --compress 0.45 6 0.01 0.20  --distort 6 0.9 0.5 tube --reverb 0.35 0.40 0.20 --delay 0.22 0.35 0.25
+python inference/inferenceTest.py --model test11.keras --input 02-note.wav --output 02-note_pred.wav  
+python displayFT.py --input 02-note.wav --output 02-note_out.wav --result test11/02-note_inf.wav --logfreq   
