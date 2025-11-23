@@ -3,7 +3,7 @@
 
 import argparse
 import numpy as np
-import os
+from pathlib import Path
 from scipy.signal import chirp, firwin, lfilter, square, sawtooth
 import soundfile as sf
 import matplotlib.pyplot as plt
@@ -268,18 +268,18 @@ def main():
     rng = np.random.default_rng(args.seed) if args.seed is not None else np.random.default_rng()
 
     # Crear el directorio de salida si no existe
-    output_dir = os.path.join('..', 'input')
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-        print(f"Directorio creado: {output_dir}")
+    base_dir = Path(__file__).resolve().parent.parent.parent / "data" / "input"
+    output_dir = base_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Directorio de salida: {output_dir}")
 
     # Crear rutas de archivos completas
     base_filename = args.outfile
-    txt_path = os.path.join(output_dir, f"{base_filename}.txt")
-    wav_path = os.path.join(output_dir, f"{base_filename}.wav")
+    txt_path = output_dir / f"{base_filename}.txt"
+    wav_path = output_dir / f"{base_filename}.wav"
 
     # Construcción de la señal
-    silencio0 = zeros_dur(fs, DUR_SIL * 5)
+    silencio0 = zeros_dur(fs, DUR_SIL)
 
     tSwp = linspace_dur(fs, DUR_SWP)
     sweep_sig = sweep_senoidal(tSwp, F0_SWP, F1_SWP, DUR_SWP)
@@ -315,19 +315,19 @@ def main():
     mots_aleatorias = generate_random_notes(fs, total_duration, f_min, f_max, rng)
 
     senal = np.concatenate([
-        silencio0, 
-        sweep_sig, 
-        silencio1, 
+        #silencio0, 
+        #sweep_sig, 
+        #silencio1, 
         ruido, 
-        silencio2,
-        ruido_mod_cuad, 
-        silencio3, 
-        ruido_mod_saw, 
-        silencio4,
-        sweep_tri1, 
-        sweep_tri2, 
-        silencio5,
-        mots_aleatorias
+        #silencio2,
+        #ruido_mod_cuad, 
+        #silencio3, 
+        #ruido_mod_saw, 
+        #silencio4,
+        #sweep_tri1, 
+        #sweep_tri2, 
+        #silencio5,
+        #mots_aleatorias
     ])
 
     # Normalización y cuantización
@@ -354,7 +354,7 @@ def main():
 
     # Guardar archivo WAV si se solicitó
     if args.wav:
-        sf.write(wav_path, senal.astype(np.float32), fs, subtype='PCM_16')
+        sf.write(str(wav_path), senal.astype(np.float32), fs, subtype='PCM_16')
         print(f"Archivo WAV generado: {wav_path}")
 
     if args.plot:

@@ -24,42 +24,33 @@ def load_waveform(path: Path) -> tuple[np.ndarray, int]:
     return tf.squeeze(waveform, axis=-1).numpy(), int(sample_rate.numpy())
 
 
-def display_waveforms(
-    target: Path,
-    result: Path,
-    input_waveform: Path | None = None,
-) -> None:
-    """Plot waveforms on the same axes (Matlab-style overlay)."""
-    waveform_t, sr_t = load_waveform(target)
-    waveform_r, sr_r = load_waveform(result)
-
-    if sr_t != sr_r:
-        raise ValueError(
-            f"Sample rate mismatch: `{target}` is {sr_t} Hz while `{result}` is {sr_r} Hz."
-        )
+def display_waveforms(waveforms: list[tuple[str, Path, str]]) -> None:
+    """Plot up to three waveforms on the same axes with predefined colours."""
+    if not waveforms:
+        raise ValueError("At least one waveform must be provided for display.")
 
     plt.figure(figsize=(12, 6))
 
-    if input_waveform is not None:
-        waveform_i, sr_i = load_waveform(input_waveform)
-        if sr_i != sr_t:
+    reference_sr: int | None = None
+    for idx, (label, path, color) in enumerate(waveforms):
+        waveform, sr = load_waveform(path)
+        if reference_sr is None:
+            reference_sr = sr
+        elif sr != reference_sr:
             raise ValueError(
-                f"Sample rate mismatch: `{input_waveform}` is {sr_i} Hz while `{target}` is {sr_t} Hz."
+                f"Sample rate mismatch when plotting `{path.name}`. "
+                f"Expected {reference_sr} Hz but got {sr} Hz."
             )
-        time_i = np.arange(len(waveform_i), dtype=np.float32) / sr_i
+        time_axis = np.arange(len(waveform), dtype=np.float32) / sr
         plt.plot(
-            time_i,
-            waveform_i,
-            label=f"Input: {input_waveform.name}",
+            time_axis,
+            waveform,
+            label=label,
             linewidth=1.0,
-            color="tab:green",
+            color=color,
+            alpha=0.5,
         )
 
-    time_t = np.arange(len(waveform_t), dtype=np.float32) / sr_t
-    time_r = np.arange(len(waveform_r), dtype=np.float32) / sr_r
-
-    plt.plot(time_t, waveform_t, label=f"Target: {target.name}", linewidth=1.0)
-    plt.plot(time_r, waveform_r, label=f"Result: {result.name}", linewidth=1.0, alpha=0.8)
     plt.title("Waveform Comparison")
     plt.xlabel("Time (s)")
     plt.ylabel("Amplitude")
@@ -71,21 +62,19 @@ def display_waveforms(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Display two WAV files overlaid in a single plot."
-    )
-    parser.add_argument(
-        "--target",
-        required=True,
-        help="Name or relative path of the WAV file located under data/output/.",
-    )
-    parser.add_argument(
-        "--result",
-        required=True,
-        help="Name or relative path of the WAV file located under data/results/.",
+        description="Display up to three WAV files overlaid in a single plot."
     )
     parser.add_argument(
         "--input",
-        help="Optional WAV filename located under data/input/ to plot first in green.",
+        help="WAV filename located under data/input/ to plot in green.",
+    )
+    parser.add_argument(
+        "--output",
+        help="WAV filename located under data/output/ to plot in blue.",
+    )
+    parser.add_argument(
+        "--result",
+        help="WAV filename located under data/results/ to plot in orange.",
     )
     return parser.parse_args()
 
@@ -99,18 +88,30 @@ def resolve_under(base: Path, value: str) -> Path:
 
 def main() -> None:
     args = parse_args()
-    target = resolve_under(DATA_OUTPUT_DIR, args.target)
-    result = resolve_under(DATA_RESULTS_DIR, args.result)
-    input_path = resolve_under(DATA_INPUT_DIR, args.input) if args.input else None
+    selections: list[tuple[str, Path, str]] = []
 
-    if not target.exists():
-        raise FileNotFoundError(f"File `{target}` does not exist.")
-    if not result.exists():
-        raise FileNotFoundError(f"File `{result}` does not exist.")
-    if input_path is not None and not input_path.exists():
-        raise FileNotFoundError(f"File `{input_path}` does not exist.")
+    if args.input:
+        input_path = resolve_under(DATA_INPUT_DIR, args.input)
+        if not input_path.exists():
+            raise FileNotFoundError(f"File `{input_path}` does not exist.")
+        selections.append((f"Input: {input_path.name}", input_path, "tab:green"))
 
-    display_waveforms(target, result, input_path)
+    if args.output:
+        output_path = resolve_under(DATA_OUTPUT_DIR, args.output)
+        if not output_path.exists():
+            raise FileNotFoundError(f"File `{output_path}` does not exist.")
+        selections.append((f"Output: {output_path.name}", output_path, "tab:blue"))
+
+    if args.result:
+        result_path = resolve_under(DATA_RESULTS_DIR, args.result)
+        if not result_path.exists():
+            raise FileNotFoundError(f"File `{result_path}` does not exist.")
+        selections.append((f"Result: {result_path.name}", result_path, "tab:orange"))
+
+    if not selections:
+        raise SystemExit("No waveforms specified. Provide at least one of --input, --output, or --result.")
+
+    display_waveforms(selections)
 
 
 if __name__ == "__main__":

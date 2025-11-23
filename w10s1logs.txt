@@ -1,0 +1,310 @@
+PS D:\VIU\xxTFM\SW\ChannelEmulation\ChannelEmulator\tasks\channelEmulation> python main.py --config w10.json --input input.wav --output output.wav
+2025-10-30 20:47:28.665207: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+2025-10-30 20:47:40.443792: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+INFO:__main__:Preparing dataset from `D:\VIU\xxTFM\SW\ChannelEmulation\ChannelEmulator\tasks\channelEmulation\data` using config `D:\VIU\xxTFM\SW\ChannelEmulation\ChannelEmulator\tasks\channelEmulation\configs\w10.json` (hop_len=24000, overlap=0.50)...
+INFO:dataset:Loaded explicit pair: `input.wav` -> `output.wav`.
+2025-10-30 20:47:55.253887: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: SSE3 SSE4.1 SSE4.2 AVX AVX2 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+INFO:dataset:Shuffling 448 window(s) with RNG seed 42.
+WARNING:tensorflow:From D:\SOFTWARE\Python313\Lib\site-packages\keras\src\backend\tensorflow\core.py:232: The name tf.placeholder is deprecated. Please use tf.compat.v1.placeholder instead.
+
+WARNING:tensorflow:From D:\SOFTWARE\Python313\Lib\site-packages\keras\src\backend\tensorflow\core.py:232: The name tf.placeholder is deprecated. Please use tf.compat.v1.placeholder instead.
+
+INFO:__main__:Skipping `tcn_full_summary` for TensorFlow 2.20.0; using `model.summary()` instead.
+Model: "channel_emulation_tcn"
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┓
+┃ Layer (type)                         ┃ Output Shape                ┃         Param # ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━┩
+│ input_waveform (InputLayer)          │ (None, 52092, 1)            │               0 │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ input_linear_projection (Conv1D)     │ (None, 52092, 1)            │               2 │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ tcn_backbone (TCN)                   │ (None, 52092, 16)           │          14,992 │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ output_linear_projection (Conv1D)    │ (None, 52092, 1)            │              17 │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ context_crop (Cropping1D)            │ (None, 48000, 1)            │               0 │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ model_metadata (ModelMetadata)       │ (None, 48000, 1)            │               0 │
+└──────────────────────────────────────┴─────────────────────────────┴─────────────────┘
+ Total params: 15,011 (58.64 KB)
+ Trainable params: 15,011 (58.64 KB)
+ Non-trainable params: 0 (0.00 B)
+Epoch 1/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 101s 8s/step - esr: 6158.9331 - loss: 4124.9639 - mse: 1756.1279 - val_esr: 710.5514 - val_loss: 441.9649 - val_mse: 77.1105
+Epoch 2/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 96s 9s/step - esr: 591.2562 - loss: 360.8697 - mse: 98.8258 - val_esr: 444.7917 - val_loss: 244.9372 - val_mse: 20.9186
+Epoch 3/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 201.8524 - loss: 112.2071 - mse: 11.0145 - val_esr: 146.8782 - val_loss: 74.2770 - val_mse: 4.4015
+Epoch 4/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 93s 8s/step - esr: 59.1403 - loss: 32.2247 - mse: 3.3206 - val_esr: 54.2965 - val_loss: 27.2993 - val_mse: 4.2967
+Epoch 5/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 101s 9s/step - esr: 18.5240 - loss: 10.0446 - mse: 1.2103 - val_esr: 25.6951 - val_loss: 14.3451 - val_mse: 3.8498
+Epoch 6/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 110s 10s/step - esr: 10.8270 - loss: 6.4298 - mse: 1.4657 - val_esr: 11.4063 - val_loss: 6.2647 - val_mse: 1.0783
+Epoch 7/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 100s 9s/step - esr: 7.8416 - loss: 4.7441 - mse: 1.1986 - val_esr: 8.7038 - val_loss: 4.4753 - val_mse: 0.5791
+Epoch 8/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 9s/step - esr: 4.4525 - loss: 2.5262 - mse: 0.4196 - val_esr: 5.6336 - val_loss: 2.7790 - val_mse: 0.1733
+Epoch 9/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 3.0625 - loss: 1.7649 - mse: 0.3154 - val_esr: 4.0225 - val_loss: 1.9784 - val_mse: 0.1199
+Epoch 10/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 95s 9s/step - esr: 1.7189 - loss: 0.9443 - mse: 0.0818 - val_esr: 2.6381 - val_loss: 1.2805 - val_mse: 0.0844
+Epoch 11/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 9s/step - esr: 1.0963 - loss: 0.6057 - mse: 0.0531 - val_esr: 1.6858 - val_loss: 0.8497 - val_mse: 0.0513
+Epoch 12/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 98s 9s/step - esr: 0.7745 - loss: 0.4265 - mse: 0.0389 - val_esr: 1.1652 - val_loss: 0.6016 - val_mse: 0.0389
+Epoch 13/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 95s 9s/step - esr: 0.5593 - loss: 0.3091 - mse: 0.0293 - val_esr: 0.8743 - val_loss: 0.4569 - val_mse: 0.0270
+Epoch 14/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 95s 9s/step - esr: 0.4362 - loss: 0.2409 - mse: 0.0235 - val_esr: 0.7132 - val_loss: 0.3738 - val_mse: 0.0243
+Epoch 15/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 97s 9s/step - esr: 0.3521 - loss: 0.1953 - mse: 0.0190 - val_esr: 0.5954 - val_loss: 0.3117 - val_mse: 0.0187
+Epoch 16/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 95s 9s/step - esr: 0.2942 - loss: 0.1633 - mse: 0.0162 - val_esr: 0.5161 - val_loss: 0.2702 - val_mse: 0.0186
+Epoch 17/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 95s 9s/step - esr: 0.2505 - loss: 0.1397 - mse: 0.0139 - val_esr: 0.4517 - val_loss: 0.2349 - val_mse: 0.0146
+Epoch 18/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 95s 9s/step - esr: 0.2184 - loss: 0.1218 - mse: 0.0122 - val_esr: 0.4000 - val_loss: 0.2082 - val_mse: 0.0150
+Epoch 19/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 95s 9s/step - esr: 0.1918 - loss: 0.1073 - mse: 0.0108 - val_esr: 0.3509 - val_loss: 0.1825 - val_mse: 0.0115
+Epoch 20/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 96s 9s/step - esr: 0.1706 - loss: 0.0956 - mse: 0.0098 - val_esr: 0.3173 - val_loss: 0.1654 - val_mse: 0.0126
+Epoch 21/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 97s 9s/step - esr: 0.1531 - loss: 0.0859 - mse: 0.0089 - val_esr: 0.2841 - val_loss: 0.1469 - val_mse: 0.0092
+Epoch 22/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 96s 9s/step - esr: 0.1385 - loss: 0.0778 - mse: 0.0082 - val_esr: 0.2626 - val_loss: 0.1361 - val_mse: 0.0106
+Epoch 23/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 95s 9s/step - esr: 0.1264 - loss: 0.0710 - mse: 0.0075 - val_esr: 0.2389 - val_loss: 0.1224 - val_mse: 0.0079
+Epoch 24/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 96s 9s/step - esr: 0.1159 - loss: 0.0653 - mse: 0.0071 - val_esr: 0.2244 - val_loss: 0.1150 - val_mse: 0.0091
+Epoch 25/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 95s 9s/step - esr: 0.1070 - loss: 0.0603 - mse: 0.0065 - val_esr: 0.2079 - val_loss: 0.1053 - val_mse: 0.0070
+Epoch 26/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0994 - loss: 0.0561 - mse: 0.0062 - val_esr: 0.1952 - val_loss: 0.0989 - val_mse: 0.0077
+Epoch 27/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 93s 8s/step - esr: 0.0927 - loss: 0.0523 - mse: 0.0057 - val_esr: 0.1826 - val_loss: 0.0917 - val_mse: 0.0062
+Epoch 28/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 93s 8s/step - esr: 0.0869 - loss: 0.0490 - mse: 0.0055 - val_esr: 0.1719 - val_loss: 0.0862 - val_mse: 0.0066
+Epoch 29/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 93s 8s/step - esr: 0.0817 - loss: 0.0462 - mse: 0.0051 - val_esr: 0.1621 - val_loss: 0.0807 - val_mse: 0.0055
+Epoch 30/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 93s 8s/step - esr: 0.0772 - loss: 0.0436 - mse: 0.0049 - val_esr: 0.1536 - val_loss: 0.0765 - val_mse: 0.0059
+Epoch 31/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0729 - loss: 0.0413 - mse: 0.0046 - val_esr: 0.1465 - val_loss: 0.0723 - val_mse: 0.0052
+Epoch 32/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0694 - loss: 0.0392 - mse: 0.0044 - val_esr: 0.1399 - val_loss: 0.0693 - val_mse: 0.0058
+Epoch 33/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 93s 8s/step - esr: 0.0660 - loss: 0.0374 - mse: 0.0042 - val_esr: 0.1367 - val_loss: 0.0671 - val_mse: 0.0052
+Epoch 34/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 95s 9s/step - esr: 0.0633 - loss: 0.0360 - mse: 0.0042 - val_esr: 0.1298 - val_loss: 0.0640 - val_mse: 0.0056
+Epoch 35/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 93s 8s/step - esr: 0.0605 - loss: 0.0344 - mse: 0.0040 - val_esr: 0.1234 - val_loss: 0.0601 - val_mse: 0.0044
+Epoch 36/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 93s 8s/step - esr: 0.0582 - loss: 0.0330 - mse: 0.0039 - val_esr: 0.1169 - val_loss: 0.0569 - val_mse: 0.0043
+Epoch 37/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0556 - loss: 0.0315 - mse: 0.0036 - val_esr: 0.1156 - val_loss: 0.0561 - val_mse: 0.0043
+Epoch 38/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 93s 8s/step - esr: 0.0537 - loss: 0.0305 - mse: 0.0036 - val_esr: 0.1112 - val_loss: 0.0544 - val_mse: 0.0048
+Epoch 39/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 93s 8s/step - esr: 0.0518 - loss: 0.0295 - mse: 0.0034 - val_esr: 0.1069 - val_loss: 0.0517 - val_mse: 0.0038
+Epoch 40/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 93s 8s/step - esr: 0.0502 - loss: 0.0285 - mse: 0.0034 - val_esr: 0.1026 - val_loss: 0.0498 - val_mse: 0.0040
+Epoch 41/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 93s 8s/step - esr: 0.0484 - loss: 0.0275 - mse: 0.0032 - val_esr: 0.1015 - val_loss: 0.0491 - val_mse: 0.0037
+Epoch 42/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 93s 8s/step - esr: 0.0471 - loss: 0.0267 - mse: 0.0032 - val_esr: 0.0976 - val_loss: 0.0473 - val_mse: 0.0039
+Epoch 43/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 93s 8s/step - esr: 0.0457 - loss: 0.0259 - mse: 0.0030 - val_esr: 0.0955 - val_loss: 0.0460 - val_mse: 0.0034
+Epoch 44/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0445 - loss: 0.0253 - mse: 0.0030 - val_esr: 0.0928 - val_loss: 0.0447 - val_mse: 0.0037
+Epoch 45/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0432 - loss: 0.0246 - mse: 0.0029 - val_esr: 0.0914 - val_loss: 0.0438 - val_mse: 0.0032
+Epoch 46/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 93s 8s/step - esr: 0.0424 - loss: 0.0240 - mse: 0.0029 - val_esr: 0.0882 - val_loss: 0.0423 - val_mse: 0.0034
+Epoch 47/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0412 - loss: 0.0234 - mse: 0.0027 - val_esr: 0.0879 - val_loss: 0.0420 - val_mse: 0.0031
+Epoch 48/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 93s 8s/step - esr: 0.0404 - loss: 0.0229 - mse: 0.0028 - val_esr: 0.0844 - val_loss: 0.0403 - val_mse: 0.0033
+Epoch 49/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 93s 8s/step - esr: 0.0394 - loss: 0.0224 - mse: 0.0026 - val_esr: 0.0844 - val_loss: 0.0402 - val_mse: 0.0031
+Epoch 50/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0432 - loss: 0.0246 - mse: 0.0029 - val_esr: 0.0914 - val_loss: 0.0438 - val_mse: 0.0032
+Epoch 46/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 93s 8s/step - esr: 0.0424 - loss: 0.0240 - mse: 0.0029 - val_esr: 0.0882 - val_loss: 0.0423 - val_mse: 0.0034
+Epoch 47/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0412 - loss: 0.0234 - mse: 0.0027 - val_esr: 0.0879 - val_loss: 0.0420 - val_mse: 0.0031
+Epoch 48/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 93s 8s/step - esr: 0.0404 - loss: 0.0229 - mse: 0.0028 - val_esr: 0.0844 - val_loss: 0.0403 - val_mse: 0.0033
+Epoch 49/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 93s 8s/step - esr: 0.0394 - loss: 0.0224 - mse: 0.0026 - val_esr: 0.0844 - val_loss: 0.0402 - val_mse: 0.0031
+Epoch 50/100
+Epoch 48/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 93s 8s/step - esr: 0.0404 - loss: 0.0229 - mse: 0.0028 - val_esr: 0.0844 - val_loss: 0.0403 - val_mse: 0.0033
+Epoch 49/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 93s 8s/step - esr: 0.0394 - loss: 0.0224 - mse: 0.0026 - val_esr: 0.0844 - val_loss: 0.0402 - val_mse: 0.0031
+Epoch 50/100
+Epoch 50/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0387 - loss: 0.0219 - mse: 0.0027 - val_esr: 0.0810 - val_loss: 0.0385 - val_mse: 0.0031
+Epoch 51/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0377 - loss: 0.0214 - mse: 0.0026 - val_esr: 0.0812 - val_loss: 0.0386 - val_mse: 0.0030
+Epoch 52/100
+Epoch 51/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0377 - loss: 0.0214 - mse: 0.0026 - val_esr: 0.0812 - val_loss: 0.0386 - val_mse: 0.0030
+Epoch 52/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0371 - loss: 0.0210 - mse: 0.0026 - val_esr: 0.0780 - val_loss: 0.0369 - val_mse: 0.0030
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0371 - loss: 0.0210 - mse: 0.0026 - val_esr: 0.0780 - val_loss: 0.0369 - val_mse: 0.0030
+Epoch 53/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0371 - loss: 0.0210 - mse: 0.0026 - val_esr: 0.0780 - val_loss: 0.0369 - val_mse: 0.0030
+Epoch 53/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0371 - loss: 0.0210 - mse: 0.0026 - val_esr: 0.0780 - val_loss: 0.0369 - val_mse: 0.0030
+Epoch 53/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0362 - loss: 0.0206 - mse: 0.0025 - val_esr: 0.0784 - val_loss: 0.0371 - val_mse: 0.0029
+Epoch 54/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 104s 9s/step - esr: 0.0356 - loss: 0.0202 - mse: 0.0025 - val_esr: 0.0752 - val_loss: 0.0355 - val_mse: 0.0028
+Epoch 55/100
+Epoch 54/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 104s 9s/step - esr: 0.0356 - loss: 0.0202 - mse: 0.0025 - val_esr: 0.0752 - val_loss: 0.0355 - val_mse: 0.0028
+Epoch 55/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 100s 9s/step - esr: 0.0349 - loss: 0.0198 - mse: 0.0024 - val_esr: 0.0760 - val_loss: 0.0359 - val_mse: 0.0028
+Epoch 55/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 100s 9s/step - esr: 0.0349 - loss: 0.0198 - mse: 0.0024 - val_esr: 0.0760 - val_loss: 0.0359 - val_mse: 0.0028
+11/11 ━━━━━━━━━━━━━━━━━━━━ 100s 9s/step - esr: 0.0349 - loss: 0.0198 - mse: 0.0024 - val_esr: 0.0760 - val_loss: 0.0359 - val_mse: 0.0028
+Epoch 56/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0344 - loss: 0.0195 - mse: 0.0024 - val_esr: 0.0732 - val_loss: 0.0345 - val_mse: 0.0028
+Epoch 57/100
+Epoch 56/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0344 - loss: 0.0195 - mse: 0.0024 - val_esr: 0.0732 - val_loss: 0.0345 - val_mse: 0.0028
+Epoch 57/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 102s 9s/step - esr: 0.0337 - loss: 0.0191 - mse: 0.0023 - val_esr: 0.0737 - val_loss: 0.0347 - val_mse: 0.0027
+Epoch 57/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 102s 9s/step - esr: 0.0337 - loss: 0.0191 - mse: 0.0023 - val_esr: 0.0737 - val_loss: 0.0347 - val_mse: 0.0027
+Epoch 58/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 102s 9s/step - esr: 0.0337 - loss: 0.0191 - mse: 0.0023 - val_esr: 0.0737 - val_loss: 0.0347 - val_mse: 0.0027
+Epoch 58/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 95s 9s/step - esr: 0.0333 - loss: 0.0189 - mse: 0.0023 - val_esr: 0.0709 - val_loss: 0.0333 - val_mse: 0.0027
+Epoch 59/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 97s 9s/step - esr: 0.0326 - loss: 0.0185 - mse: 0.0022 - val_esr: 0.0717 - val_loss: 0.0338 - val_mse: 0.0026
+Epoch 60/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 95s 9s/step - esr: 0.0323 - loss: 0.0183 - mse: 0.0023 - val_esr: 0.0691 - val_loss: 0.0324 - val_mse: 0.0026
+Epoch 61/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 92s 8s/step - esr: 0.0317 - loss: 0.0180 - mse: 0.0021 - val_esr: 0.0698 - val_loss: 0.0328 - val_mse: 0.0025
+Epoch 62/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 92s 8s/step - esr: 0.0313 - loss: 0.0178 - mse: 0.0022 - val_esr: 0.0673 - val_loss: 0.0315 - val_mse: 0.0025
+Epoch 63/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 93s 8s/step - esr: 0.0308 - loss: 0.0175 - mse: 0.0021 - val_esr: 0.0680 - val_loss: 0.0318 - val_mse: 0.0025
+Epoch 64/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 93s 8s/step - esr: 0.0305 - loss: 0.0173 - mse: 0.0021 - val_esr: 0.0657 - val_loss: 0.0307 - val_mse: 0.0025
+Epoch 65/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 98s 9s/step - esr: 0.0300 - loss: 0.0170 - mse: 0.0020 - val_esr: 0.0663 - val_loss: 0.0310 - val_mse: 0.0024
+Epoch 66/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 92s 8s/step - esr: 0.0297 - loss: 0.0169 - mse: 0.0021 - val_esr: 0.0641 - val_loss: 0.0300 - val_mse: 0.0024
+Epoch 67/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 93s 8s/step - esr: 0.0292 - loss: 0.0166 - mse: 0.0020 - val_esr: 0.0646 - val_loss: 0.0301 - val_mse: 0.0023
+Epoch 68/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 93s 8s/step - esr: 0.0290 - loss: 0.0164 - mse: 0.0020 - val_esr: 0.0627 - val_loss: 0.0292 - val_mse: 0.0024
+Epoch 69/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 95s 9s/step - esr: 0.0285 - loss: 0.0162 - mse: 0.0019 - val_esr: 0.0630 - val_loss: 0.0293 - val_mse: 0.0022
+Epoch 70/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 9s/step - esr: 0.0283 - loss: 0.0160 - mse: 0.0020 - val_esr: 0.0613 - val_loss: 0.0286 - val_mse: 0.0023
+Epoch 71/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 95s 9s/step - esr: 0.0279 - loss: 0.0158 - mse: 0.0019 - val_esr: 0.0615 - val_loss: 0.0285 - val_mse: 0.0021
+Epoch 72/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0277 - loss: 0.0157 - mse: 0.0019 - val_esr: 0.0600 - val_loss: 0.0279 - val_mse: 0.0023
+Epoch 73/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0272 - loss: 0.0155 - mse: 0.0019 - val_esr: 0.0599 - val_loss: 0.0277 - val_mse: 0.0020
+Epoch 74/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0271 - loss: 0.0153 - mse: 0.0019 - val_esr: 0.0589 - val_loss: 0.0274 - val_mse: 0.0023
+Epoch 75/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 96s 9s/step - esr: 0.0267 - loss: 0.0151 - mse: 0.0018 - val_esr: 0.0582 - val_loss: 0.0268 - val_mse: 0.0018
+Epoch 76/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 95s 9s/step - esr: 0.0265 - loss: 0.0150 - mse: 0.0018 - val_esr: 0.0584 - val_loss: 0.0272 - val_mse: 0.0025
+Epoch 77/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 93s 8s/step - esr: 0.0262 - loss: 0.0149 - mse: 0.0018 - val_esr: 0.0565 - val_loss: 0.0258 - val_mse: 0.0016
+Epoch 78/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 9s/step - esr: 0.0258 - loss: 0.0147 - mse: 0.0018 - val_esr: 0.0580 - val_loss: 0.0272 - val_mse: 0.0027
+Epoch 79/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 9s/step - esr: 0.0257 - loss: 0.0146 - mse: 0.0018 - val_esr: 0.0556 - val_loss: 0.0254 - val_mse: 0.0016
+Epoch 80/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0253 - loss: 0.0143 - mse: 0.0018 - val_esr: 0.0567 - val_loss: 0.0265 - val_mse: 0.0026
+Epoch 81/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 95s 9s/step - esr: 0.0251 - loss: 0.0142 - mse: 0.0017 - val_esr: 0.0545 - val_loss: 0.0248 - val_mse: 0.0016
+Epoch 82/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0247 - loss: 0.0140 - mse: 0.0017 - val_esr: 0.0556 - val_loss: 0.0259 - val_mse: 0.0025
+Epoch 83/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 95s 9s/step - esr: 0.0246 - loss: 0.0139 - mse: 0.0017 - val_esr: 0.0537 - val_loss: 0.0245 - val_mse: 0.0016
+Epoch 84/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 95s 9s/step - esr: 0.0243 - loss: 0.0138 - mse: 0.0017 - val_esr: 0.0543 - val_loss: 0.0253 - val_mse: 0.0024
+Epoch 85/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0241 - loss: 0.0136 - mse: 0.0016 - val_esr: 0.0525 - val_loss: 0.0239 - val_mse: 0.0016
+Epoch 86/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0238 - loss: 0.0135 - mse: 0.0016 - val_esr: 0.0531 - val_loss: 0.0246 - val_mse: 0.0023
+Epoch 87/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0236 - loss: 0.0133 - mse: 0.0016 - val_esr: 0.0516 - val_loss: 0.0235 - val_mse: 0.0016
+Epoch 88/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0233 - loss: 0.0132 - mse: 0.0016 - val_esr: 0.0518 - val_loss: 0.0240 - val_mse: 0.0022
+Epoch 89/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 97s 9s/step - esr: 0.0231 - loss: 0.0131 - mse: 0.0016 - val_esr: 0.0506 - val_loss: 0.0230 - val_mse: 0.0015
+Epoch 90/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 9s/step - esr: 0.0229 - loss: 0.0130 - mse: 0.0016 - val_esr: 0.0506 - val_loss: 0.0234 - val_mse: 0.0021
+Epoch 91/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0227 - loss: 0.0128 - mse: 0.0015 - val_esr: 0.0495 - val_loss: 0.0225 - val_mse: 0.0015
+Epoch 92/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 9s/step - esr: 0.0224 - loss: 0.0127 - mse: 0.0016 - val_esr: 0.0494 - val_loss: 0.0228 - val_mse: 0.0020
+Epoch 93/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0223 - loss: 0.0126 - mse: 0.0015 - val_esr: 0.0484 - val_loss: 0.0220 - val_mse: 0.0015
+Epoch 94/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 95s 9s/step - esr: 0.0220 - loss: 0.0125 - mse: 0.0015 - val_esr: 0.0481 - val_loss: 0.0221 - val_mse: 0.0019
+Epoch 95/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 9s/step - esr: 0.0218 - loss: 0.0124 - mse: 0.0015 - val_esr: 0.0473 - val_loss: 0.0214 - val_mse: 0.0014
+Epoch 96/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0217 - loss: 0.0123 - mse: 0.0015 - val_esr: 0.0469 - val_loss: 0.0214 - val_mse: 0.0017
+Epoch 97/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 98s 9s/step - esr: 0.0215 - loss: 0.0122 - mse: 0.0014 - val_esr: 0.0461 - val_loss: 0.0208 - val_mse: 0.0013
+Epoch 98/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0213 - loss: 0.0121 - mse: 0.0015 - val_esr: 0.0456 - val_loss: 0.0207 - val_mse: 0.0015
+Epoch 99/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 95s 9s/step - esr: 0.0211 - loss: 0.0119 - mse: 0.0014 - val_esr: 0.0454 - val_loss: 0.0205 - val_mse: 0.0013
+Epoch 100/100
+11/11 ━━━━━━━━━━━━━━━━━━━━ 94s 8s/step - esr: 0.0209 - loss: 0.0119 - mse: 0.0014 - val_esr: 0.0451 - val_loss: 0.0205 - val_mse: 0.0016
+INFO:__main__:Saved model to `D:\VIU\xxTFM\SW\ChannelEmulation\ChannelEmulator\tasks\channelEmulation\savedModels\w10.keras`.
+PS D:\VIU\xxTFM\SW\ChannelEmulation\ChannelEmulator\tasks\channelEmulation> python inference/inferenceTest.py --model w10.keras --input 03-shortSong.wav --output 03-shortSong_pred.wav
+2025-10-30 23:29:27.480535: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+2025-10-30 23:29:40.674981: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+INFO:__main__:Using seq_len=48000, hop_len=24000, context=4092 (input_seq_len=52092) inferred from config.
+INFO:__main__:Loading model from `D:\VIU\xxTFM\SW\ChannelEmulation\ChannelEmulator\tasks\channelEmulation\savedModels\w10.keras`...
+2025-10-30 23:29:57.983837: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: SSE3 SSE4.1 SSE4.2 AVX AVX2 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+WARNING:tensorflow:From D:\SOFTWARE\Python313\Lib\site-packages\keras\src\backend\tensorflow\core.py:232: The name tf.placeholder is deprecated. Please use tf.compat.v1.placeholder instead.
+
+WARNING:tensorflow:From D:\SOFTWARE\Python313\Lib\site-packages\keras\src\backend\tensorflow\core.py:232: The name tf.placeholder is deprecated. Please use tf.compat.v1.placeholder instead.
+
+INFO:__main__:Model architecture:
+Model: "channel_emulation_tcn"
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┓
+┃ Layer (type)                         ┃ Output Shape                ┃         Param # ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━┩
+│ input_waveform (InputLayer)          │ (None, 52092, 1)            │               0 │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ input_linear_projection (Conv1D)     │ (None, 52092, 1)            │               2 │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ tcn_backbone (TCN)                   │ (None, 52092, 16)           │          14,992 │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ output_linear_projection (Conv1D)    │ (None, 52092, 1)            │              17 │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ context_crop (Cropping1D)            │ (None, 48000, 1)            │               0 │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ model_metadata (ModelMetadata)       │ (None, 48000, 1)            │               0 │
+└──────────────────────────────────────┴─────────────────────────────┴─────────────────┘
+ Total params: 15,011 (58.64 KB)
+ Trainable params: 15,011 (58.64 KB)
+ Non-trainable params: 0 (0.00 B)
+INFO:__main__:Loading input waveform `D:\VIU\xxTFM\SW\ChannelEmulation\ChannelEmulator\tasks\channelEmulation\data\input\03-shortSong.wav`...
+INFO:__main__:Sample rate check passed (model=48000 Hz, input=48000 Hz).
+INFO:__main__:Model metadata references config `D:\VIU\xxTFM\SW\ChannelEmulation\ChannelEmulator\tasks\channelEmulation\configs\w10.json`.
+INFO:__main__:Framing audio into windows...
+INFO:__main__:Running inference on 13 frame(s)...
+INFO:__main__:Reconstructing waveform from overlapping windows...
+INFO:__main__:Writing result to `D:\VIU\xxTFM\SW\ChannelEmulation\ChannelEmulator\tasks\channelEmulation\data\results\w10\03-shortSong_inf.wav`...
+INFO:__main__:Inference complete in 3.429 s (audio duration 6.500 s, real-time factor 1.90). Saved to `D:\VIU\xxTFM\SW\ChannelEmulation\ChannelEmulator\tasks\channelEmulation\data\results\w10\03-shortSong_inf.wav`.
+PS D:\VIU\xxTFM\SW\ChannelEmulation\ChannelEmulator\tasks\channelEmulation> 
